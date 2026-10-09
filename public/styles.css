@@ -87,6 +87,20 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 999px;
+}
+
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
@@ -425,6 +439,19 @@ h1, h2 {
   align-items: flex-end;
   gap: 1.25rem;
   margin-bottom: 1.75rem;
+}
+
+.entry-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-shrink: 0;
+}
+
+.entry-heading-actions #recentEntriesButton[aria-pressed="true"] {
+  background: var(--p-soft);
+  border-color: var(--p);
+  color: var(--p-text);
 }
 
 .page h1 {
@@ -1095,6 +1122,22 @@ tbody tr:last-child td {
   padding: 0;
 }
 
+.mini-action.message {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: 0 .65rem;
+  color: var(--p-text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mini-action:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
 .mini-action .icon {
   width: 1.1rem;
   height: 1.1rem;
@@ -1194,6 +1237,7 @@ tbody tr:last-child td {
 
 .filter-field label {
   font-size: .85rem;
+  display: none;
 }
 
 .table-footer {
@@ -1440,7 +1484,7 @@ tbody tr:last-child td {
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1.25rem;
+  gap: .8rem 1rem;
 }
 
 .field-full {
@@ -1471,7 +1515,7 @@ tbody tr:last-child td {
 }
 
 .form-panel {
-  width: min(100%, 44rem);
+  width: min(100%, 64rem);
   max-height: calc(100vh - 2rem);
   max-height: calc(100dvh - 2rem);
   padding: 0;
@@ -1484,7 +1528,7 @@ tbody tr:last-child td {
 
 .form-panel .panel-heading {
   align-items: center;
-  padding: 1.25rem 1.5rem;
+  padding: 1rem 1.25rem;
   margin: 0;
   border-bottom: 1px solid var(--line);
 }
@@ -1498,7 +1542,7 @@ tbody tr:last-child td {
 
 .modal-body {
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 1rem 1.25rem;
   overscroll-behavior: contain;
 }
 
@@ -1507,9 +1551,41 @@ tbody tr:last-child td {
   align-items: center;
   justify-content: space-between;
   gap: .75rem;
-  padding: 1rem 1.5rem;
+  padding: .8rem 1.25rem;
   border-top: 1px solid var(--line);
   background: var(--surface);
+}
+
+.salesperson-entry {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+
+.salesperson-entry input {
+  min-width: 0;
+  flex: 1;
+}
+
+.salesperson-import {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  max-width: 52rem;
+}
+
+.salesperson-import .field {
+  flex: 1;
+}
+
+.salesperson-import input[type="file"] {
+  width: 100%;
+  padding: .55rem;
+}
+
+#salespersonCount {
+  display: block;
+  margin-top: .8rem;
 }
 
 .form-footer .form-hint {
@@ -1640,6 +1716,16 @@ tbody tr:last-child td {
   flex: 1;
   min-width: 0;
   word-wrap: break-word;
+}
+
+.toast-action {
+  flex: 0 0 auto;
+  align-self: center;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
 }
 
 .toast-close {
@@ -1868,17 +1954,25 @@ tbody tr:last-child td {
     display: block;
   }
 
-  .data-table tr.entry-row {
+  .entries-table tbody {
     display: grid;
-    grid-template-columns: 2.6rem auto minmax(0, 1fr) auto;
-    gap: .5rem .6rem;
-    align-items: center;
-    padding: 1rem;
-    border-bottom: 1px solid var(--line);
+    gap: .65rem;
+    padding: .7rem;
   }
 
-  .data-table tr.entry-row:last-child {
-    border-bottom: 0;
+  .data-table tr.entry-row {
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    gap: .45rem .6rem;
+    align-items: center;
+    padding: .7rem .8rem;
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    background: var(--surface);
+  }
+
+  .entries-table tr.entry-row {
+    margin: 0;
   }
 
   .data-table tr.entry-row td {
@@ -1895,26 +1989,47 @@ tbody tr:last-child td {
   .c-sr {
     grid-column: 1;
     grid-row: 1;
+    align-self: start;
+    padding-top: .12rem !important;
   }
 
   .c-party {
-    grid-column: 2 / 4;
+    grid-column: 2;
     grid-row: 1;
+    min-width: 0 !important;
   }
 
   .c-party strong, .c-party small {
     overflow-wrap: anywhere;
   }
 
-  .c-qty {
-    grid-column: 4;
-    grid-row: 1;
-    text-align: right;
+  .party-cell strong {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .party-cell small {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .c-qty strong::after {
-    content: " passes";
+  .entry-event-date {
+    display: none;
+  }
+
+  .c-qty {
+    grid-column: 3;
+    grid-row: 1;
+    text-align: right;
+    white-space: nowrap;
+    align-self: start;
+  }
+
+  .c-qty span {
     font-size: .85rem;
     font-weight: 500;
     color: var(--muted);
@@ -1929,18 +2044,38 @@ tbody tr:last-child td {
     grid-column: 3;
     grid-row: 2;
     justify-self: start;
+    text-align: right;
   }
 
-  /* The whole card is tappable and Delete lives inside the edit pop-up, so the row buttons are hidden here. */
+  /* Keep the WhatsApp action available on mobile; edit and delete are handled in the entry form. */
   .c-actions {
-    display: none !important;
+    display: block !important;
+    grid-column: 2 / -1;
+    grid-row: 3;
+    margin-top: .1rem;
   }
 
-  .c-phone, .c-remark {
+  .entry-row[data-has-remark="true"] .c-actions {
+    grid-row: 4;
+  }
+
+  .c-actions button[data-edit], .c-actions button[data-delete] {
+    display: none;
+  }
+
+  .c-actions .action-buttons {
+    justify-content: flex-start;
+  }
+
+  .c-remark {
     grid-column: 2 / -1;
     grid-row: 3;
     color: var(--ink-2);
     overflow-wrap: anywhere;
+    font-size: .9rem;
+    line-height: 1.25;
+    max-height: 2.5em;
+    overflow: hidden;
   }
 
   .data-table tr.entry-row td.c-remark {
@@ -1951,27 +2086,18 @@ tbody tr:last-child td {
   }
 
   .data-table tr.entry-row td.c-time {
-    display: block;
+    display: none;
   }
 
   .data-table tr.entry-row td.c-remark.is-empty {
     display: none;
   }
 
-  .c-time {
-    grid-column: 2 / -1;
-    grid-row: 4;
-    font-size: .88rem;
-    color: var(--muted);
-  }
-
-  .c-time .sub-date {
+  .entry-event-date {
     display: inline;
-    margin-left: .4rem;
-  }
-
-  .c-time .sub-date::before {
-    content: "· ";
+    color: var(--muted) !important;
+    font-size: .82rem !important;
+    margin-top: .1rem !important;
   }
 
   .data-table tr.state-row {
@@ -1985,6 +2111,11 @@ tbody tr:last-child td {
 }
 
 @media (max-width: 700px) {
+  .salesperson-import {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .page h1 {
     font-size: 1.8rem;
   }
@@ -1994,6 +2125,14 @@ tbody tr:last-child td {
     flex-direction: column;
     margin-bottom: 1.25rem;
     gap: 1rem;
+  }
+
+  .entry-heading-actions {
+    width: 100%;
+  }
+
+  .entry-heading-actions #recentEntriesButton {
+    flex: 1;
   }
 
   .date-control {
@@ -2116,6 +2255,10 @@ tbody tr:last-child td {
 
   .filter-field {
     min-width: 0;
+  }
+
+  .filter-field label {
+    display: none;
   }
 
   .filter-reset {

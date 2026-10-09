@@ -33,7 +33,8 @@ app.use("/api", (req, res, next) => {
 const settingsSchema = new mongoose.Schema({
   key: { type: String, unique: true, default: "main" },
   defaultDailyLimit: { type: Number, min: 0, default: 80 },
-  eventName: { type: String, default: "Navaratri Pass Tracker" }
+  eventName: { type: String, default: "Navaratri Pass Tracker" },
+  salespersons: { type: [String], default: [] }
 }, { timestamps: true });
 
 const inventorySchema = new mongoose.Schema({
@@ -48,6 +49,7 @@ const entrySchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   partyName: { type: String, required: true, trim: true, maxlength: 160 },
   phone: { type: String, default: "", trim: true, maxlength: 30 },
+  salesperson: { type: String, default: "", trim: true, maxlength: 120 },
   quantity: { type: Number, required: true, min: 1, default: 1 },
   status: { type: String, enum: ["Sent", "Pending"], default: "Pending" },
   attendance: { type: String, enum: ["Present", "Absent", "Not Marked"], default: "Not Marked" },
@@ -87,6 +89,18 @@ async function getSettings() {
     return settings;
   }
 }
+function uniqueSalespersons(names) {
+  const seen = new Set();
+  return names.filter(name => {
+    const key = name.toLocaleLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function mergeSalespersons(existing, incoming) {
+  return uniqueSalespersons([...existing, ...incoming]);
+}
 async function ensureInventory(date) {
   let inventory = await Inventory.findOne({ date });
   if (!inventory) {
@@ -119,7 +133,7 @@ app.get("/api/health", (req, res) => res.json({ ok: true, database: mongoose.con
 
 app.get("/api/settings", asyncRoute(async (req, res) => {
   const settings = await getSettings();
-  res.json({ eventName: settings.eventName, defaultDailyLimit: settings.defaultDailyLimit });
+  res.json({ eventName: settings.eventName, defaultDailyLimit: settings.defaultDailyLimit, salespersons: settings.salespersons });
 }));
 
 app.put("/api/settings", asyncRoute(async (req, res) => {
@@ -132,7 +146,52 @@ app.put("/api/settings", asyncRoute(async (req, res) => {
     { key: "main" }, { $set: { defaultDailyLimit, eventName } },
     { new: true, upsert: true, setDefaultsOnInsert: true }
   );
-  res.json({ eventName: settings.eventName, defaultDailyLimit: settings.defaultDailyLimit });
+  res.json({ eventName: settings.eventName, defaultDailyLimit: settings.defaultDailyLimit, salespersons: settings.salespersons });
+}));
+
+app.post("/api/salespersons", asyncRoute(async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  if (!name) throw bad("Enter a salesperson name.", "salesperson");
+  if (name.length > 120) throw bad("Salesperson names can be at most 120 characters.", "salesperson");
+  const settings = await getSettings();
+  settings.salespersons = mergeSalespersons(settings.salespersons, [name]);
+  if (settings.salespersons.length > 1000) throw bad("The salesperson list cannot contain more than 1,000 names.", "salesperson");
+  await settings.save();
+  res.status(201).json({ salespersons: settings.salespersons });
+}));
+
+app.post("/api/salespersons/import", express.raw({
+  type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  limit: "5mb"
+}), asyncRoute(async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad("Choose a non-empty .xlsx file.", "salespersonsFile");
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(req.body);
+  } catch {
+    throw bad("The uploaded file isn't a valid .xlsx workbook.", "salespersonsFile");
+  }
+  const sheet = workbook.worksheets[0];
+  if (!sheet) throw bad("The workbook has no worksheets.", "salespersonsFile");
+  const header = sheet.getRow(1).values;
+  const column = header.findIndex(value => String(value || "").trim().toLocaleLowerCase() === "salesperson");
+  if (column < 1) throw bad("The first worksheet must have a 'Salesperson' column in its first row.", "salespersonsFile");
+  const names = [];
+  for (let row = 2; row <= sheet.rowCount; row++) {
+    const value = sheet.getRow(row).getCell(column).value;
+    const name = String(value && typeof value === "object" ? value.text ?? value.result ?? "" : value ?? "").trim();
+    if (name) names.push(name);
+  }
+  if (!names.length) throw bad("No salesperson names were found below the 'Salesperson' header.", "salespersonsFile");
+  if (names.some(name => name.length > 120)) throw bad("Salesperson names can be at most 120 characters.", "salespersonsFile");
+  const settings = await getSettings();
+  const existing = uniqueSalespersons(settings.salespersons);
+  const merged = mergeSalespersons(existing, names);
+  const imported = merged.length - existing.length;
+  if (merged.length > 1000) throw bad("The salesperson list cannot contain more than 1,000 names.", "salespersonsFile");
+  settings.salespersons = merged;
+  await settings.save();
+  res.json({ salespersons: settings.salespersons, imported });
 }));
 
 app.get("/api/inventory/:date", asyncRoute(async (req, res) => {
@@ -156,12 +215,12 @@ app.put("/api/inventory/:date", asyncRoute(async (req, res) => {
 }));
 
 app.get("/api/entries", asyncRoute(async (req, res) => {
-  const { date, from, to, status, attendance, q } = req.query;
+  const { date, from, to, status, attendance, q, recent } = req.query;
   const filter = {};
-  if (date) {
+  if (recent !== "true" && date) {
     if (!validDate(date)) throw bad("Invalid date.", "date");
     filter.date = date;
-  } else if (from || to) {
+  } else if (recent !== "true" && (from || to)) {
     filter.date = {};
     if (from) { if (!validDate(from)) throw bad("Invalid start date.", "from"); filter.date.$gte = from; }
     if (to) { if (!validDate(to)) throw bad("Invalid end date.", "to"); filter.date.$lte = to; }
@@ -170,10 +229,20 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
   if (attendance && ["Present", "Absent", "Not Marked"].includes(attendance)) filter.attendance = attendance;
   if (q) {
     const safe = String(q).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    filter.$or = [{ partyName: new RegExp(safe, "i") }, { phone: new RegExp(safe, "i") }, { remark: new RegExp(safe, "i") }];
+    filter.$or = [{ partyName: new RegExp(safe, "i") }, { phone: new RegExp(safe, "i") }, { salesperson: new RegExp(safe, "i") }, { remark: new RegExp(safe, "i") }];
   }
-  const entries = await Entry.find(filter).sort({ date: -1, srNo: 1 }).limit(10000).lean();
+  const entries = await Entry.find(filter)
+    .sort(recent === "true" ? { createdAt: -1, _id: -1 } : { date: -1, srNo: 1 })
+    .limit(recent === "true" ? 100 : 10000)
+    .lean();
   res.json(entries);
+}));
+
+app.get("/api/entries/:id", asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid entry ID.", { code: "BAD_ID" });
+  const entry = await Entry.findById(req.params.id).lean();
+  if (!entry) throw new HttpError(404, "Entry not found. It may have been deleted.", { code: "NOT_FOUND" });
+  res.json(entry);
 }));
 
 app.post("/api/entries", asyncRoute(async (req, res) => {
@@ -181,6 +250,7 @@ app.post("/api/entries", asyncRoute(async (req, res) => {
   if (!validDate(body.date)) throw bad("Select a valid event date.", "date");
   const partyName = String(body.partyName || "").trim();
   const phone = String(body.phone || "").trim();
+  const salesperson = String(body.salesperson || "").trim();
   const quantity = Number(body.quantity);
   const status = body.status || "Pending";
   const attendance = body.attendance || "Not Marked";
@@ -188,6 +258,7 @@ app.post("/api/entries", asyncRoute(async (req, res) => {
   if (!partyName) throw bad("Party name is required.", "partyName");
   if (partyName.length > 160) throw bad("Party name can be at most 160 characters.", "partyName");
   checkPhone(phone);
+  if (salesperson.length > 120) throw bad("Salesperson names can be at most 120 characters.", "salesperson");
   if (remark.length > 1000) throw bad("Remark can be at most 1,000 characters.", "remark");
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) throw bad("Pass quantity must be a whole number greater than zero.", "quantity");
   if (!["Sent", "Pending"].includes(status)) throw bad("Invalid status.", "status");
@@ -202,7 +273,7 @@ app.post("/api/entries", asyncRoute(async (req, res) => {
     const last = await Entry.findOne({ date: body.date }).sort({ srNo: -1 }).select("srNo").lean();
     try {
       entry = await Entry.create({
-        date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, quantity, status, attendance, remark
+        date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, salesperson, quantity, status, attendance, remark
       });
     } catch (e) {
       if (e.code !== 11000 || attempt === 4) throw e;
@@ -219,6 +290,7 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
   const date = body.date || old.date;
   const partyName = String(body.partyName ?? old.partyName).trim();
   const phone = String(body.phone ?? old.phone).trim();
+  const salesperson = String(body.salesperson ?? old.salesperson).trim();
   const quantity = Number(body.quantity ?? old.quantity);
   const status = body.status || old.status;
   const attendance = body.attendance || old.attendance;
@@ -227,6 +299,7 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
   if (!partyName) throw bad("Party name is required.", "partyName");
   if (partyName.length > 160) throw bad("Party name can be at most 160 characters.", "partyName");
   checkPhone(phone);
+  if (salesperson.length > 120) throw bad("Salesperson names can be at most 120 characters.", "salesperson");
   if (remark.length > 1000) throw bad("Remark can be at most 1,000 characters.", "remark");
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) throw bad("Pass quantity must be a whole number greater than zero.", "quantity");
   if (!["Sent", "Pending"].includes(status) || !["Present", "Absent", "Not Marked"].includes(attendance)) throw bad("Invalid status or attendance.");
@@ -241,7 +314,7 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
     const last = await Entry.findOne({ date }).sort({ srNo: -1 }).select("srNo").lean();
     old.srNo = (last?.srNo || 0) + 1;
   }
-  Object.assign(old, { date, partyName, phone, quantity, status, attendance, remark });
+  Object.assign(old, { date, partyName, phone, salesperson, quantity, status, attendance, remark });
   await old.save();
   res.json(old);
 }));
@@ -276,6 +349,7 @@ app.get("/api/reports.xlsx", asyncRoute(async (req, res) => {
     { header: "Date & Time Created", key: "createdAt", width: 23 },
     { header: "Party Name", key: "partyName", width: 28 },
     { header: "Party Phone Number", key: "phone", width: 22 },
+    { header: "Salesperson", key: "salesperson", width: 22 },
     { header: "Pass Quantity", key: "quantity", width: 14 },
     { header: "Status", key: "status", width: 14 },
     { header: "Present / Absent", key: "attendance", width: 18 },
@@ -287,7 +361,7 @@ app.get("/api/reports.xlsx", asyncRoute(async (req, res) => {
     ...e,
     createdAt: e.createdAt ? new Date(e.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : ""
   }));
-  sheet.autoFilter = { from: "A1", to: "I1" };
+  sheet.autoFilter = { from: "A1", to: "J1" };
 
   const summarySheet = workbook.addWorksheet("Daily Summary");
   summarySheet.columns = [

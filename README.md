@@ -6,13 +6,16 @@ A private, single-event pass and ticket tracking app built with Node.js, Express
 
 - Responsive dashboard for desktop, tablet and mobile, with a bottom navigation bar on phones
 - Light and dark themes (Navaratri palette: kumkum crimson + marigold). Follows your device setting by default; switch between System / Light / Dark from the top bar or **Settings → Appearance**
-- Add and edit entries in a pop-up (a bottom sheet on phones). Click or tap any row in the entries table to open it for editing; Delete is inside the pop-up too
+- Add and edit entries in a modal using routes (`#entries/new` and `#entries/<id>`). Browser back/forward and direct entry links are supported; click or tap any row to open it for editing
 - Clear error handling: inline field validation, readable messages when the server or database is unreachable, retry buttons when a list fails to load, and an offline banner
 - Day-wise inventory with configurable default daily pass limit
-- Entry form: daily Sr. No., creation date/time, event date, party name, phone, pass quantity, Sent/Pending status, Present/Absent/Not Marked attendance, remarks
+- Salesperson list imported from an Excel workbook in Settings, with the option to add a new salesperson while entering a pass
+- Entry form: daily Sr. No., creation date/time, event date, party name, phone, salesperson, pass quantity, Sent/Pending status, Present/Absent/Not Marked attendance, remarks
+- WhatsApp message draft after saving a new entry or choosing **Send message** from its list row; the user reviews and sends it from WhatsApp
 - Create, edit and delete entries
 - Inventory validation: prevents over-allocation; deleting an entry returns passes to inventory
-- Search and filters for date, status, attendance, party, phone and remarks
+- Search and filters for date, status, attendance, party, salesperson, phone and remarks
+- Recent entries view showing up to the 100 latest-added pass entries across event dates
 - Excel `.xlsx` reports for one date, date range, or all records
 - Workbook includes Pass Entries and Daily Summary sheets
 
@@ -65,8 +68,10 @@ Go to **Reports & export** and choose:
 - Complete event history
 
 Each workbook contains:
-- **Pass Entries**: Sr. No., event date, creation timestamp, party name, phone, quantity, status, attendance and remark
+- **Pass Entries**: Sr. No., event date, creation timestamp, party name, phone, salesperson, quantity, status, attendance and remark
 - **Daily Summary**: daily limit, allocated, available, sent, pending, present, absent and not-marked entry counts
+
+In **Settings → Salespeople**, import an `.xlsx` workbook whose first worksheet has a `Salesperson` header in the first row and salesperson names below it. Imports add new names to the existing list without removing names already saved.
 
 ## Important notes
 

@@ -51,6 +51,7 @@
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-pass" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
       <symbol id="i-send" viewBox="0 0 24 24"><path d="m4 12 16-7-5 15-3-6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
       <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
       <symbol id="i-diya" viewBox="0 0 32 32"><path d="M16 3c2.6 3 4 5.2 4 7.6A4 4 0 0 1 16 14.5a4 4 0 0 1-4-3.9C12 8.2 13.4 6 16 3z" fill="currentColor"/><path d="M4 18h24c0 5.2-4.7 9-12 9S4 23.2 4 18z" fill="currentColor"/></symbol>
     </defs>
@@ -197,12 +198,16 @@
           <div>
             <h1>Pass entries</h1>
             <p>Create, update and track every party receiving passes.</p>
-          </div><button class="button button-primary" id="newEntryButton" data-new-entry><svg class="icon"><use href="#i-plus"/></svg>New entry</button>
+          </div>
+          <div class="entry-heading-actions">
+            <button class="button button-secondary" id="recentEntriesButton" type="button" aria-pressed="false"><svg class="icon"><use href="#i-clock"/></svg>Recent</button>
+            <button class="button button-primary" id="newEntryButton" data-new-entry><svg class="icon"><use href="#i-plus"/></svg>New entry</button>
+          </div>
         </div>
         <div class="entry-summary" id="entryInventorySummary"></div>
         <article class="panel table-panel">
           <div class="filters">
-            <div class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="entrySearch" type="search" placeholder="Search party, phone or remark" aria-label="Search entries" autocomplete="off"></div>
+            <div class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="entrySearch" type="search" placeholder="Search party, salesperson or phone" aria-label="Search entries" autocomplete="off"></div>
             <div class="filter-controls">
               <div class="filter-field"><label for="entriesDate">Event date</label><input type="date" id="entriesDate"></div>
               <div class="filter-field"><label for="entriesStatus">Status</label><select id="entriesStatus">
@@ -230,7 +235,7 @@
                   <th>Status</th>
                   <th>Attendance</th>
                   <th>Remark</th>
-                  <th><span class="sr-only">Actions</span></th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="entryRows">
@@ -325,6 +330,27 @@
         </article>
         <article class="panel settings-panel">
           <div class="settings-section-head">
+            <div class="settings-icon"><svg class="icon"><use href="#i-user"/></svg></div>
+            <div>
+              <h2>Salespeople</h2>
+              <p>Import names from an Excel file or add them while creating an entry.</p>
+            </div>
+          </div>
+          <form id="salespersonImportForm">
+            <div class="form-alert" id="salespersonImportAlert" role="alert" hidden></div>
+            <div class="salesperson-import">
+              <div class="field">
+                <label for="salespersonsFile">Salesperson Excel file (.xlsx)</label>
+                <input type="file" id="salespersonsFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+                <small>Use a first-row header named “Salesperson” and list names below it. Imported names are added to the existing list.</small>
+              </div>
+              <button class="button button-secondary" type="submit" id="importSalespersons">Import names</button>
+            </div>
+            <p class="form-hint" id="salespersonCount" aria-live="polite"></p>
+          </form>
+        </article>
+        <article class="panel settings-panel">
+          <div class="settings-section-head">
             <div class="settings-icon"><svg class="icon"><use href="#i-alert"/></svg></div>
             <div>
               <h2>Inventory rules</h2>
@@ -353,7 +379,7 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 
-  <!-- Add / edit entry modal -->
+  <!-- Route-based add / edit entry form -->
   <div class="modal-backdrop" id="entryModal" hidden>
     <article class="panel form-panel" id="entryFormPanel" role="dialog" aria-modal="true" aria-labelledby="entryFormTitle" aria-describedby="entryFormSub">
       <div class="panel-heading">
@@ -377,6 +403,13 @@
             <div class="field"><label for="partyPhone">Party phone number</label>
               <input type="tel" id="partyPhone" placeholder="Contact number" maxlength="30" inputmode="tel" autocomplete="off" aria-describedby="err-partyPhone">
               <small class="field-error" id="err-partyPhone"></small></div>
+            <div class="field"><label for="salesperson">Salesperson</label>
+              <div class="salesperson-entry">
+                <input type="text" id="salesperson" list="salespersonOptions" placeholder="Search or enter a name" maxlength="120" autocomplete="off" aria-describedby="err-salesperson">
+                <datalist id="salespersonOptions"></datalist>
+                <button type="button" class="button button-secondary button-small" id="addSalesperson">Add</button>
+              </div>
+              <small class="field-error" id="err-salesperson"></small></div>
             <div class="field"><label for="quantity">Pass quantity <em>*</em></label>
               <input type="number" id="quantity" min="1" step="1" value="1" inputmode="numeric" required aria-describedby="hint-quantity err-quantity">
               <small id="hint-quantity">Available for this date: <b id="formAvailable">—</b></small>
@@ -393,7 +426,7 @@
                 <option>Absent</option>
               </select></div>
             <div class="field field-full"><label for="remark">Remark</label>
-              <textarea id="remark" rows="3" placeholder="Add a note if needed" maxlength="1000" aria-describedby="err-remark"></textarea>
+              <textarea id="remark" rows="2" placeholder="Add a note if needed" maxlength="1000" aria-describedby="err-remark"></textarea>
               <small class="field-error" id="err-remark"></small></div>
           </div>
         </div>

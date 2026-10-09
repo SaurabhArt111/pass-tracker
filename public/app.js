@@ -6,9 +6,11 @@ const $ = (id) => document.getElementById(id);
 const state = {
   page: "dashboard",
   dashboardDate: todayISO(),
-  settings: { defaultDailyLimit: 80 },
+  recentEntries: false,
+  settings: { defaultDailyLimit: 80, salespersons: [] },
   byId: new Map(),         // entries currently on screen, keyed by _id
   editId: null,
+  entryRouteId: null,
   deleteId: null,
   formAvailable: null,     // passes available for the date chosen in the form
   formDirty: false
@@ -102,7 +104,7 @@ async function api(url, options = {}, { timeout = 15000, raw = false } = {}) {
 }
 
 /* ---------- Toasts ---------- */
-function toast(message, kind = "success") {
+function toast(message, kind = "success", action = null) {
   if (kind === true) kind = "error";            // backwards-compatible with toast(msg, true)
   const region = $("toastRegion");
   const el = document.createElement("div");
@@ -110,11 +112,20 @@ function toast(message, kind = "success") {
   el.setAttribute("role", kind === "error" ? "alert" : "status");
   el.innerHTML = `${icon(kind === "error" ? "alert" : "check")}<span class="toast-text"></span><button class="toast-close" type="button" aria-label="Dismiss">${icon("close")}</button>`;
   el.querySelector(".toast-text").textContent = message;
+  if (action) {
+    const link = document.createElement("a");
+    link.className = "toast-action";
+    link.href = action.href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = action.label;
+    el.insertBefore(link, el.querySelector(".toast-close"));
+  }
   const remove = () => el.remove();
   el.querySelector(".toast-close").addEventListener("click", remove);
   region.appendChild(el);
   while (region.children.length > 3) region.firstElementChild.remove();
-  setTimeout(remove, kind === "error" ? 7000 : 3500);
+  setTimeout(remove, action ? 10000 : kind === "error" ? 7000 : 3500);
 }
 
 let lastReported = { text: "", at: 0 };
@@ -254,18 +265,50 @@ function setPage(page, { updateHash = true } = {}) {
   window.scrollTo({ top: 0 });
   refreshCurrentPage();
 }
+function routeParts() {
+  return location.hash.slice(1).split("/").filter(Boolean);
+}
+function handleLocationChange() {
+  const [page, routeId] = routeParts();
+  if (page === "entries" && routeId) {
+    setPage("entries", { updateHash: false });
+    if (state.entryRouteId !== routeId) openEntryRoute(routeId);
+    return;
+  }
+  if (state.entryRouteId || modalStack.some(m => m.el.id === "entryModal")) closeEntryRoute();
+  setPage(page || "dashboard", { updateHash: false });
+}
 function refreshCurrentPage() {
   if (state.page === "dashboard") loadDashboard();
   if (state.page === "entries") loadEntries();
   if (state.page === "settings") loadSettings();
 }
-window.addEventListener("popstate", () => setPage(location.hash.slice(1) || "dashboard", { updateHash: false }));
+window.addEventListener("popstate", handleLocationChange);
 
 /* ==========================================================================
    Rendering
    ========================================================================== */
 function statusPill(status) {
   return `<span class="pill pill-${status === "Sent" ? "sent" : "pending"}">${esc(status)}</span>`;
+}
+function whatsappDraft(entry) {
+  const phone = String(entry.phone || "").trim();
+  const digits = phone.replace(/\D/g, "");
+  if (!digits || digits.length < 5 || /[,/]/.test(phone)) return null;
+  const [year, month, day] = entry.date.split("-");
+  const passWord = entry.quantity === 1 ? "pass" : "passes";
+  const message = `Hello! As requested, we're pleased to share ${entry.quantity} complimentary ${passWord} for Suvarn Navratri on ${day}/${month}/${year}. We look forward to celebrating with you!`;
+  const url = new URL(`https://wa.me/${digits}`);
+  url.searchParams.set("text", message);
+  return url.toString();
+}
+function openWhatsAppForEntry(entry) {
+  const url = whatsappDraft(entry);
+  if (!url) {
+    toast("Add one valid party phone number to this entry before opening WhatsApp.", "error");
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 function attendancePill(value) {
   const cls = value === "Present" ? "present" : value === "Absent" ? "absent" : "unmarked";
@@ -320,7 +363,7 @@ async function loadDashboard() {
     if (!recent.length) return setTableState(rows, 6, "empty", `No entries for ${prettyDate(date)} yet. Tap + to add the first one.`);
     rows.innerHTML = recent.map(e => `<tr ${rowAttrs(e)}>
       <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
-      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong></div></td>
+      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong>${e.salesperson ? `<small>Salesperson: ${esc(e.salesperson)}</small>` : ""}</div></td>
       <td class="c-phone">${esc(e.phone || "—")}</td>
       <td class="c-qty"><strong>${e.quantity}</strong></td>
       <td class="c-status">${statusPill(e.status)}</td>
@@ -338,7 +381,8 @@ let entriesReq = 0;
 async function loadEntries() {
   const date = $("entriesDate").value;
   const params = new URLSearchParams();
-  if (date) params.set("date", date);
+  if (state.recentEntries) params.set("recent", "true");
+  else if (date) params.set("date", date);
   if ($("entriesStatus").value) params.set("status", $("entriesStatus").value);
   if ($("entriesAttendance").value) params.set("attendance", $("entriesAttendance").value);
   if ($("entrySearch").value.trim()) params.set("q", $("entrySearch").value.trim());
@@ -349,29 +393,31 @@ async function loadEntries() {
   try {
     const [entries, summary] = await Promise.all([
       api(`/api/entries?${params.toString()}`),
-      api(`/api/inventory/${summaryDate}`)
+      state.recentEntries ? Promise.resolve(null) : api(`/api/inventory/${summaryDate}`)
     ]);
     if (my !== entriesReq) return;
     cacheEntries(entries);
     $("entryCountLabel").textContent = `${entries.length} record${entries.length === 1 ? "" : "s"}`;
-    $("entryInventorySummary").innerHTML =
-      `<span class="summary-chip">Event date <strong>${prettyDate(summaryDate)}</strong></span>` +
-      `<span class="summary-chip">Daily limit <strong>${num(summary.limit)}</strong></span>` +
-      `<span class="summary-chip">Allocated <strong>${num(summary.allocated)}</strong></span>` +
-      `<span class="summary-chip">Available <strong>${num(summary.available)}</strong></span>`;
+    $("entryInventorySummary").innerHTML = state.recentEntries
+      ? `<span class="summary-chip">Recent entries <strong>Latest ${entries.length}${entries.length === 100 ? "+" : ""}</strong></span><span class="summary-chip">Sorted by newest added</span>`
+      : `<span class="summary-chip">Event date <strong>${prettyDate(summaryDate)}</strong></span>` +
+        `<span class="summary-chip">Daily limit <strong>${num(summary.limit)}</strong></span>` +
+        `<span class="summary-chip">Allocated <strong>${num(summary.allocated)}</strong></span>` +
+        `<span class="summary-chip">Available <strong>${num(summary.available)}</strong></span>`;
     if (!entries.length) {
       const filtered = params.toString() !== "";
-      return setTableState(rows, 8, "empty", filtered ? "No entries match these filters." : "No entries yet. Tap + to add the first one.");
+      return setTableState(rows, 8, "empty", state.recentEntries ? "No pass entries have been added yet." : filtered ? "No entries match these filters." : "No entries yet. Tap + to add the first one.");
     }
-    rows.innerHTML = entries.map(e => `<tr ${rowAttrs(e)}>
+    rows.innerHTML = entries.map(e => `<tr ${rowAttrs(e)}${e.remark ? " data-has-remark=\"true\"" : ""}>
       <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
       <td class="c-time"><span class="when">${esc(prettyDateTime(e.createdAt))}</span><div class="sub-date">${esc(prettyDate(e.date))}</div></td>
-      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong><small>${esc(e.phone || "No phone number")}</small></div></td>
-      <td class="c-qty"><strong>${e.quantity}</strong></td>
+      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong><small>${esc(e.phone || "No phone number")}</small>${e.salesperson ? `<small>Salesperson: ${esc(e.salesperson)}</small>` : ""}<small class="entry-event-date">Event: ${esc(prettyDate(e.date))}</small></div></td>
+      <td class="c-qty"><strong>${e.quantity}</strong> <span>pass${e.quantity === 1 ? "" : "es"}</span></td>
       <td class="c-status">${statusPill(e.status)}</td>
       <td class="c-att">${attendancePill(e.attendance)}</td>
       <td class="c-remark${e.remark ? "" : " is-empty"}" title="${esc(e.remark)}">${esc(e.remark || "—")}</td>
       <td class="c-actions"><div class="action-buttons">
+        <button class="mini-action message" type="button" data-whatsapp="${esc(e._id)}" ${whatsappDraft(e) ? "" : "disabled"} title="${whatsappDraft(e) ? "Send message on WhatsApp" : "Add one valid phone number to send a message"}" aria-label="Send message to ${esc(e.partyName)} on WhatsApp">${icon("send")}<span>Send message</span></button>
         <button class="mini-action" type="button" data-edit="${esc(e._id)}" title="Edit entry" aria-label="Edit entry ${srLabel(e.srNo)}">${icon("edit")}</button>
         <button class="mini-action delete" type="button" data-delete="${esc(e._id)}" title="Delete entry" aria-label="Delete entry ${srLabel(e.srNo)}">${icon("trash")}</button>
       </div></td></tr>`).join("");
@@ -389,13 +435,24 @@ async function loadSettings() {
     state.settings = await api("/api/settings");
     $("eventName").value = state.settings.eventName || "Navaratri Pass Tracker";
     $("defaultLimit").value = state.settings.defaultDailyLimit ?? 80;
+    renderSalespersonOptions();
   } catch (err) { reportError(err); }
+}
+
+function renderSalespersonOptions() {
+  const names = state.settings.salespersons || [];
+  $("salespersonOptions").replaceChildren(...names.map(name => {
+    const option = document.createElement("option");
+    option.value = name;
+    return option;
+  }));
+  $("salespersonCount").textContent = `${names.length} salesperson${names.length === 1 ? "" : "s"} available.`;
 }
 
 /* ==========================================================================
    Form helpers (inline errors)
    ========================================================================== */
-const FIELD_FOR = { date: "entryDate", partyName: "partyName", phone: "partyPhone", quantity: "quantity", remark: "remark", defaultDailyLimit: "defaultLimit", limit: "defaultLimit" };
+const FIELD_FOR = { date: "entryDate", partyName: "partyName", phone: "partyPhone", salesperson: "salesperson", quantity: "quantity", remark: "remark", defaultDailyLimit: "defaultLimit", limit: "defaultLimit" };
 
 function setFieldError(inputId, message) {
   const input = $(inputId);
@@ -421,7 +478,7 @@ function setBusy(button, busy, busyText, idleHTML) {
 /* ==========================================================================
    Entry modal (add + edit)
    ========================================================================== */
-const ENTRY_FIELDS = ["entryDate", "partyName", "partyPhone", "quantity", "remark"];
+const ENTRY_FIELDS = ["entryDate", "partyName", "partyPhone", "salesperson", "quantity", "remark"];
 const SAVE_NEW = "Save entry", SAVE_EDIT = "Save changes";
 let availabilityReq = 0;
 
@@ -429,7 +486,7 @@ function defaultEntryDate() {
   return (state.page === "entries" && $("entriesDate").value) || state.dashboardDate || todayISO();
 }
 
-function openEntryForm(entry = null) {
+function populateEntryForm(entry = null) {
   $("entryForm").reset();
   clearFieldErrors(ENTRY_FIELDS);
   hideAlert($("formAlert"));
@@ -444,6 +501,7 @@ function openEntryForm(entry = null) {
   $("entryDate").value = entry?.date || defaultEntryDate();
   $("partyName").value = entry?.partyName || "";
   $("partyPhone").value = entry?.phone || "";
+  $("salesperson").value = entry?.salesperson || "";
   $("quantity").value = entry?.quantity || 1;
   $("entryStatus").value = entry?.status || "Pending";
   $("attendance").value = entry?.attendance || "Not Marked";
@@ -454,11 +512,47 @@ function openEntryForm(entry = null) {
   updateFormAvailability();
 }
 
-function closeEntryForm() {
+function openEntryForm(entry = null) {
+  const route = entry ? `#entries/${encodeURIComponent(entry._id)}` : "#entries/new";
+  history.pushState(null, "", route);
+  setPage("entries", { updateHash: false });
+  openEntryRoute(entry?._id || "new", entry);
+}
+
+async function openEntryRoute(routeId, entry = null) {
+  state.entryRouteId = routeId;
+  if (routeId === "new") {
+    populateEntryForm(null);
+    return;
+  }
+  try {
+    const record = entry || state.byId.get(routeId) || await api(`/api/entries/${encodeURIComponent(routeId)}`);
+    if (state.entryRouteId !== routeId) return;
+    state.byId.set(record._id, record);
+    populateEntryForm(record);
+  } catch (err) {
+    if (state.entryRouteId !== routeId) return;
+    console.error(err);
+    toast(err.message, "error");
+    history.replaceState(null, "", "#entries");
+    handleLocationChange();
+  }
+}
+
+function closeEntryRoute() {
   closeModal($("entryModal"));
+  state.entryRouteId = null;
   state.editId = null;
   state.formDirty = false;
   availabilityReq++;
+}
+function closeEntryForm() {
+  if (location.hash.startsWith("#entries/")) {
+    history.replaceState(null, "", "#entries");
+    handleLocationChange();
+    return;
+  }
+  closeEntryRoute();
 }
 modalDismiss.entryModal = closeEntryForm;
 
@@ -496,6 +590,7 @@ function readEntryForm() {
     date: $("entryDate").value,
     partyName: $("partyName").value.trim(),
     phone: $("partyPhone").value.trim(),
+    salesperson: $("salesperson").value.trim(),
     quantity: Number($("quantity").value),
     status: $("entryStatus").value,
     attendance: $("attendance").value,
@@ -512,6 +607,7 @@ function validateEntry(p) {
     const digits = p.phone.replace(/\D/g, "").length;
     if (!/^[0-9+()\-\s./,]+$/.test(p.phone) || digits < 5) errors.partyPhone = "Enter a valid phone number, for example +91 98765 43210.";
   }
+  if (p.salesperson.length > 120) errors.salesperson = "Salesperson names can be at most 120 characters.";
   if ($("quantity").value === "" || !Number.isInteger(p.quantity) || p.quantity < 1) errors.quantity = "Enter a whole number of 1 or more.";
   else if (p.quantity > 100000) errors.quantity = "Quantity can be at most 100,000.";
   else if (state.formAvailable !== null && p.quantity > state.formAvailable) errors.quantity = `Only ${num(state.formAvailable)} pass${state.formAvailable === 1 ? "" : "es"} available for this date.`;
@@ -550,11 +646,14 @@ $("entryForm").addEventListener("submit", async (event) => {
   const idle = id ? SAVE_EDIT : SAVE_NEW;
   setBusy($("saveEntry"), true, "Saving…", idle);
   try {
-    await api(id ? `/api/entries/${id}` : "/api/entries", { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
+    const savedEntry = await api(id ? `/api/entries/${id}` : "/api/entries", { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
     closeEntryForm();
-    toast(id ? "Entry updated." : "Entry saved.");
+    const draftUrl = !id && whatsappDraft(savedEntry);
+    const whatsappAction = draftUrl ? { href: draftUrl, label: "Send message" } : null;
+    toast(id ? "Entry updated." : "Entry saved.", "success", whatsappAction);
+    if (id) state.lastRowId = savedEntry?._id || null;
     $("dashboardDate").value = payload.date; state.dashboardDate = payload.date;
-    $("entriesDate").value = payload.date;
+    if (!state.recentEntries) $("entriesDate").value = payload.date;
     await Promise.all([state.page === "entries" ? loadEntries() : null, loadDashboard()]);
     refocusRow();
   } catch (err) {
@@ -578,6 +677,31 @@ $("closeEntryForm").addEventListener("click", closeEntryForm);
 $("cancelEntry").addEventListener("click", closeEntryForm);
 $("entryModal").addEventListener("mousedown", (e) => { if (e.target === $("entryModal") && !state.formDirty) closeEntryForm(); });
 
+$("addSalesperson").addEventListener("click", async () => {
+  const name = $("salesperson").value.trim();
+  if (!name) {
+    setFieldError("salesperson", "Enter a salesperson name to add it.");
+    $("salesperson").focus();
+    return;
+  }
+  setBusy($("addSalesperson"), true, "Adding…", "Add");
+  try {
+    const result = await api("/api/salespersons", { method: "POST", body: JSON.stringify({ name }) });
+    state.settings.salespersons = result.salespersons;
+    renderSalespersonOptions();
+    $("salesperson").value = name;
+    setFieldError("salesperson", "");
+    state.formDirty = true;
+    toast("Salesperson added.");
+  } catch (err) {
+    console.error(err);
+    setFieldError("salesperson", err.field === "salesperson" ? err.message : "");
+    if (err.field !== "salesperson") showAlert($("formAlert"), err.message);
+  } finally {
+    setBusy($("addSalesperson"), false, "", "Add");
+  }
+});
+
 /* The table re-renders after a save, so put keyboard focus back on the row that was edited. */
 function refocusRow() {
   const id = state.lastRowId;
@@ -591,12 +715,17 @@ function refocusRow() {
 document.querySelectorAll("[data-new-entry]").forEach(b => b.addEventListener("click", () => openEntryForm()));
 
 function openEntryById(id) {
-  state.lastRowId = id;
   const entry = state.byId.get(id);
   if (!entry) { toast("That entry isn't loaded. Refreshing the list.", "error"); refreshCurrentPage(); return; }
   openEntryForm(entry);
 }
 function handleRowActivate(event, container) {
+  const whatsapp = event.target.closest("[data-whatsapp]");
+  if (whatsapp) {
+    const entry = state.byId.get(whatsapp.dataset.whatsapp);
+    if (entry) openWhatsAppForEntry(entry);
+    return;
+  }
   const del = event.target.closest("[data-delete]");
   if (del) { askDelete(del.dataset.delete); return; }
   const retry = event.target.closest("[data-retry]");
@@ -674,6 +803,7 @@ $("settingsForm").addEventListener("submit", async (event) => {
   setBusy($("saveSettings"), true, "Saving…", "Save settings");
   try {
     state.settings = await api("/api/settings", { method: "PUT", body: JSON.stringify({ eventName: $("eventName").value.trim(), defaultDailyLimit: limit }) });
+    renderSalespersonOptions();
     toast("Settings saved.");
   } catch (err) {
     console.error(err);
@@ -681,6 +811,33 @@ $("settingsForm").addEventListener("submit", async (event) => {
     else showAlert($("settingsAlert"), err.message);
   } finally {
     setBusy($("saveSettings"), false, "", "Save settings");
+  }
+});
+
+$("salespersonImportForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  hideAlert($("salespersonImportAlert"));
+  const file = $("salespersonsFile").files[0];
+  if (!file) {
+    showAlert($("salespersonImportAlert"), "Choose an .xlsx workbook to import.");
+    return;
+  }
+  setBusy($("importSalespersons"), true, "Importing…", "Import names");
+  try {
+    const result = await api("/api/salespersons/import", {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+    });
+    state.settings.salespersons = result.salespersons;
+    renderSalespersonOptions();
+    $("salespersonsFile").value = "";
+    toast(`${result.imported} new salesperson${result.imported === 1 ? "" : "s"} imported.`);
+  } catch (err) {
+    console.error(err);
+    showAlert($("salespersonImportAlert"), err.message);
+  } finally {
+    setBusy($("importSalespersons"), false, "", "Import names");
   }
 });
 
@@ -730,10 +887,36 @@ document.querySelectorAll("[data-page]").forEach(btn => btn.addEventListener("cl
 document.querySelectorAll("[data-goto]").forEach(btn => btn.addEventListener("click", () => setPage(btn.dataset.goto)));
 
 $("dashboardDate").addEventListener("change", () => { state.dashboardDate = $("dashboardDate").value || todayISO(); loadDashboard(); });
-["entriesDate", "entriesStatus", "entriesAttendance"].forEach(id => $(id).addEventListener("change", loadEntries));
+function leaveRecentEntries() {
+  if (!state.recentEntries) return;
+  state.recentEntries = false;
+  $("recentEntriesButton").setAttribute("aria-pressed", "false");
+}
+["entriesDate", "entriesStatus", "entriesAttendance"].forEach(id => $(id).addEventListener("change", () => {
+  leaveRecentEntries();
+  loadEntries();
+}));
 let searchTimer;
-$("entrySearch").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadEntries, 250); });
+$("entrySearch").addEventListener("input", () => {
+  leaveRecentEntries();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadEntries, 250);
+});
+$("recentEntriesButton").addEventListener("click", () => {
+  state.recentEntries = !state.recentEntries;
+  $("recentEntriesButton").setAttribute("aria-pressed", String(state.recentEntries));
+  if (state.recentEntries) {
+    $("entriesDate").value = "";
+    $("entriesStatus").value = "";
+    $("entriesAttendance").value = "";
+    $("entrySearch").value = "";
+  } else {
+    $("entriesDate").value = todayISO();
+  }
+  loadEntries();
+});
 $("clearFilters").addEventListener("click", () => {
+  leaveRecentEntries();
   $("entriesDate").value = ""; $("entriesStatus").value = ""; $("entriesAttendance").value = ""; $("entrySearch").value = "";
   loadEntries();
 });
@@ -743,4 +926,4 @@ $("todayLabel").textContent = new Date().toLocaleDateString("en-IN", { weekday: 
 
 syncOnline();
 loadSettings();
-setPage(location.hash.slice(1) || "dashboard", { updateHash: false });
+handleLocationChange();
