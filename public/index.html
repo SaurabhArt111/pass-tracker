@@ -3,76 +3,123 @@
 
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#17211d">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#FBF6F5">
   <title>Navaratri Pass Tracker</title>
+  <script>
+    /* Apply the saved theme (or the system theme) before first paint to avoid a flash. */
+    (function () {
+      var pref = "system";
+      try { pref = localStorage.getItem("pt-theme") || "system"; } catch (e) {}
+      if (pref !== "light" && pref !== "dark") pref = "system";
+      var dark = pref === "dark" || (pref === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      var root = document.documentElement;
+      root.dataset.theme = dark ? "dark" : "light";
+      root.dataset.themePref = pref;
+      root.style.colorScheme = dark ? "dark" : "light";
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=Noto+Sans+Gujarati:wght@400;600;700&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 
 <body>
-  <div class="app-shell">
+  <!-- Icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+      <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M3 9a2 2 0 0 0 0 6v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3a2 2 0 0 1 0-6V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z M14 5v14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="0"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V10m7 10V4m7 16v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.8v2.4m0 13.6v2.4M4.5 7.4l2.1 1.2m10.8 6.8 2.1 1.2M4.5 16.6l2.1-1.2m10.8-6.8 2.1-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.2m0 14.6v2.2M2.5 12h2.2m14.6 0h2.2M5.3 5.3l1.6 1.6m10.2 10.2 1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+      <symbol id="i-system" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 20h7M12 16.5V20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v4.5m0 2.6v.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-offline" viewBox="0 0 24 24"><path d="M3 3l18 18M8.5 8.8A12 12 0 0 0 2.5 12M5.8 12.6a8 8 0 0 1 3.4-1.9M12 19.5v.1M15.5 10.7a8 8 0 0 1 2.7 1.9M15.4 8.2A12 12 0 0 1 21.5 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-pass" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m4 12 16-7-5 15-3-6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-diya" viewBox="0 0 32 32"><path d="M16 3c2.6 3 4 5.2 4 7.6A4 4 0 0 1 16 14.5a4 4 0 0 1-4-3.9C12 8.2 13.4 6 16 3z" fill="currentColor"/><path d="M4 18h24c0 5.2-4.7 9-12 9S4 23.2 4 18z" fill="currentColor"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="offline-banner" id="offlineBanner" role="status" hidden>
+    <svg class="icon"><use href="#i-offline"/></svg>
+    <span>You're offline. Changes can't be saved until the connection returns.</span>
+  </div>
+
+  <div class="app-shell" id="appShell">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <div class="brand-mark">N<span>+</span></div>
-        <div><strong>Navaratri</strong><small>PASS TRACKER</small></div>
+        <div class="brand-mark"><svg class="icon"><use href="#i-diya"/></svg></div>
+        <div><strong>Navaratri</strong><small>Pass tracker</small></div>
       </div>
-      <div class="nav-label">WORKSPACE</div>
       <nav class="nav-list" aria-label="Main navigation">
-        <button class="nav-item active" data-page="dashboard"><span class="nav-icon">▦</span>Dashboard</button>
-        <button class="nav-item" data-page="entries"><span class="nav-icon">＋</span>Pass entries</button>
-        <button class="nav-item" data-page="reports"><span class="nav-icon">▤</span>Reports & export</button>
-        <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span>Settings</button>
+        <button class="nav-item active" data-page="dashboard"><svg class="icon"><use href="#i-home"/></svg>Dashboard</button>
+        <button class="nav-item" data-page="entries"><svg class="icon"><use href="#i-ticket"/></svg>Pass entries</button>
+        <button class="nav-item" data-page="reports"><svg class="icon"><use href="#i-chart"/></svg>Reports &amp; export</button>
+        <button class="nav-item" data-page="settings"><svg class="icon"><use href="#i-gear"/></svg>Settings</button>
       </nav>
+      <button class="button button-primary side-add" data-new-entry><svg class="icon"><use href="#i-plus"/></svg>New entry</button>
       <div class="sidebar-bottom">
         <div class="event-chip"><span class="live-dot"></span>
           <div><strong>Private workspace</strong><small>Single event · Local admin</small></div>
         </div>
-        <small class="sidebar-foot">NAVARATRI · PASS MANAGEMENT</small>
       </div>
     </aside>
 
     <main class="main">
       <header class="topbar">
-        <button class="mobile-menu icon-button" id="mobileMenu" aria-label="Open navigation">☰</button>
-        <div class="breadcrumbs"><span>Workspace</span><b>/</b><strong id="crumb">Dashboard</strong></div>
-        <div class="top-actions"><span class="today-label" id="todayLabel"></span>
-          <div class="avatar">A</div>
+        <div class="m-brand" aria-hidden="true"><span class="brand-mark"><svg class="icon"><use href="#i-diya"/></svg></span></div>
+        <div class="breadcrumbs"><span class="crumb-root">Workspace</span><b class="crumb-sep">/</b><strong id="crumb">Dashboard</strong></div>
+        <div class="top-actions">
+          <span class="today-label" id="todayLabel"></span>
+          <button class="icon-button" id="themeToggle" type="button" aria-label="Theme: system. Click to change.">
+            <svg class="icon"><use href="#i-system" id="themeToggleIcon"/></svg>
+          </button>
+          <div class="avatar" aria-hidden="true">A</div>
         </div>
       </header>
 
       <section class="page active" id="page-dashboard">
         <div class="page-heading">
           <div>
-            <div class="eyebrow">EVENT OVERVIEW</div>
             <h1>Pass dashboard</h1>
             <p>Keep every pass accounted for, from allocation to attendance.</p>
           </div>
-          <div class="date-control"><label for="dashboardDate">EVENT DATE</label><input type="date" id="dashboardDate">
-          </div>
+          <div class="date-control"><label for="dashboardDate">Event date</label><input type="date" id="dashboardDate"></div>
         </div>
         <div class="stats-grid">
           <article class="stat-card">
-            <div class="stat-top"><span>Daily pass limit</span><span class="stat-icon sage">▣</span></div>
+            <div class="stat-top"><span>Daily pass limit</span><span class="stat-icon tone-a"><svg class="icon"><use href="#i-pass"/></svg></span></div>
             <div class="stat-value" id="statLimit">—</div>
             <div class="stat-note">Configured for this date</div>
           </article>
           <article class="stat-card">
-            <div class="stat-top"><span>Passes allocated</span><span class="stat-icon blue">↗</span></div>
+            <div class="stat-top"><span>Passes allocated</span><span class="stat-icon tone-b"><svg class="icon"><use href="#i-send"/></svg></span></div>
             <div class="stat-value" id="statAllocated">—</div>
             <div class="stat-note">Sent + pending quantities</div>
           </article>
           <article class="stat-card">
-            <div class="stat-top"><span>Available passes</span><span class="stat-icon green">✓</span></div>
+            <div class="stat-top"><span>Available passes</span><span class="stat-icon tone-a"><svg class="icon"><use href="#i-check"/></svg></span></div>
             <div class="stat-value" id="statAvailable">—</div>
             <div class="stat-note">Ready to allocate</div>
           </article>
           <article class="stat-card">
-            <div class="stat-top"><span>Awaiting dispatch</span><span class="stat-icon amber">◷</span></div>
+            <div class="stat-top"><span>Awaiting dispatch</span><span class="stat-icon tone-b"><svg class="icon"><use href="#i-clock"/></svg></span></div>
             <div class="stat-value" id="statPending">—</div>
             <div class="stat-note">Passes marked pending</div>
           </article>
@@ -83,30 +130,27 @@
               <div>
                 <h2>Daily inventory</h2>
                 <p id="inventoryDateText">Selected event date</p>
-              </div><span class="soft-tag">LIVE COUNT</span>
+              </div><span class="soft-tag">Live count</span>
             </div>
             <div class="inventory-visual">
-              <div class="ring" id="inventoryRing">
+              <div class="ring" id="inventoryRing" role="img" aria-label="Allocated share of daily limit">
                 <div class="ring-inner"><strong id="ringPercent">0%</strong><span>allocated</span></div>
               </div>
               <div class="inventory-details">
                 <div class="big-count"><strong id="inventoryRemaining">—</strong><span>passes remaining</span></div>
-                <div class="legend-row"><i class="legend-dot allocated-dot"></i><span>Allocated</span><b
-                    id="legendAllocated">—</b></div>
-                <div class="legend-row"><i class="legend-dot available-dot"></i><span>Available</span><b
-                    id="legendAvailable">—</b></div><button class="text-button" data-goto="settings">Adjust daily limit
-                  →</button>
+                <div class="legend-row"><i class="legend-dot allocated-dot"></i><span>Allocated</span><b id="legendAllocated">—</b></div>
+                <div class="legend-row"><i class="legend-dot available-dot"></i><span>Available</span><b id="legendAvailable">—</b></div>
+                <button class="text-button" data-goto="settings">Adjust daily limit</button>
               </div>
             </div>
-            <div class="inventory-warning" id="inventoryWarning" hidden>All available passes have been allocated for
-              this date.</div>
+            <div class="inventory-warning" id="inventoryWarning" hidden>All available passes have been allocated for this date.</div>
           </article>
           <article class="panel attendance-panel">
             <div class="panel-heading">
               <div>
                 <h2>Attendance snapshot</h2>
                 <p>For the selected event date</p>
-              </div><span class="stat-icon violet">◎</span>
+              </div>
             </div>
             <div class="attendance-total"><strong id="attendanceTotal">0</strong><span>entries recorded</span></div>
             <div class="attendance-bar">
@@ -125,26 +169,23 @@
           <div class="panel-heading">
             <div>
               <h2>Recent pass entries</h2>
-              <p>Latest records for the selected date</p>
-            </div><button class="button button-secondary button-small" data-goto="entries">View all entries
-              <span>→</span></button>
+              <p>Latest records for the selected date. Tap a row to edit it.</p>
+            </div><button class="button button-secondary button-small" data-goto="entries">View all entries</button>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="data-table">
               <thead>
                 <tr>
-                  <th>SR. NO.</th>
-                  <th>PARTY</th>
-                  <th>PHONE</th>
-                  <th>PASSES</th>
-                  <th>STATUS</th>
-                  <th>ATTENDANCE</th>
+                  <th>Sr. no.</th>
+                  <th>Party</th>
+                  <th>Phone</th>
+                  <th>Passes</th>
+                  <th>Status</th>
+                  <th>Attendance</th>
                 </tr>
               </thead>
               <tbody id="recentRows">
-                <tr>
-                  <td colspan="6" class="empty-cell">Loading entries…</td>
-                </tr>
+                <tr class="state-row"><td colspan="6"><div class="state">Loading entries…</div></td></tr>
               </tbody>
             </table>
           </div>
@@ -154,136 +195,90 @@
       <section class="page" id="page-entries">
         <div class="page-heading">
           <div>
-            <div class="eyebrow">PASS REGISTER</div>
             <h1>Pass entries</h1>
             <p>Create, update and track every party receiving passes.</p>
-          </div><button class="button button-primary" id="newEntryButton"><span>＋</span> New entry</button>
+          </div><button class="button button-primary" id="newEntryButton" data-new-entry><svg class="icon"><use href="#i-plus"/></svg>New entry</button>
         </div>
         <div class="entry-summary" id="entryInventorySummary"></div>
-        <article class="panel form-panel" id="entryFormPanel" hidden>
-          <div class="panel-heading">
-            <div>
-              <h2 id="entryFormTitle">Add pass entry</h2>
-              <p>Fields marked with * are required.</p>
-            </div><button class="icon-button close-form" id="closeEntryForm" aria-label="Close form">×</button>
-          </div>
-          <form id="entryForm">
-            <input type="hidden" id="editId">
-            <div class="form-grid">
-              <div class="field"><label for="entryDate">Event date <em>*</em></label><input type="date" id="entryDate"
-                  required></div>
-              <div class="field"><label for="partyName">Party name <em>*</em></label><input type="text" id="partyName"
-                  placeholder="Enter person or party name" maxlength="160" required></div>
-              <div class="field"><label for="partyPhone">Party phone number</label><input type="tel" id="partyPhone"
-                  placeholder="Enter contact number" maxlength="30"></div>
-              <div class="field"><label for="quantity">Pass quantity <em>*</em></label><input type="number"
-                  id="quantity" min="1" step="1" value="1" required><small>Available for this date: <b
-                    id="formAvailable">—</b></small></div>
-              <div class="field"><label for="entryStatus">Status</label><select id="entryStatus">
-                  <option>Pending</option>
-                  <option>Sent</option>
-                </select></div>
-              <div class="field"><label for="attendance">Present / Absent</label><select id="attendance">
-                  <option value="Not Marked">Not marked</option>
-                  <option>Present</option>
-                  <option>Absent</option>
-                </select></div>
-              <div class="field field-full"><label for="remark">Remark</label><textarea id="remark" rows="3"
-                  placeholder="Add a note if needed…" maxlength="1000"></textarea></div>
-            </div>
-            <div class="form-footer"><span class="form-hint">Date & time of creation is recorded automatically.</span>
-              <div class="button-row"><button type="button" class="button button-secondary"
-                  id="cancelEntry">Cancel</button><button type="submit" class="button button-primary"
-                  id="saveEntry">Save entry <span>→</span></button></div>
-            </div>
-          </form>
-        </article>
-        <article class="panel">
+        <article class="panel table-panel">
           <div class="filters">
-            <div class="search-box"><span>⌕</span><input id="entrySearch" type="search"
-                placeholder="Search party, phone or remark…"></div>
+            <div class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="entrySearch" type="search" placeholder="Search party, phone or remark" aria-label="Search entries" autocomplete="off"></div>
             <div class="filter-controls">
-              <div class="filter-field"><label for="entriesDate">EVENT DATE</label><input type="date" id="entriesDate">
-              </div>
-              <div class="filter-field"><label for="entriesStatus">STATUS</label><select id="entriesStatus">
+              <div class="filter-field"><label for="entriesDate">Event date</label><input type="date" id="entriesDate"></div>
+              <div class="filter-field"><label for="entriesStatus">Status</label><select id="entriesStatus">
                   <option value="">All statuses</option>
                   <option>Sent</option>
                   <option>Pending</option>
                 </select></div>
-              <div class="filter-field"><label for="entriesAttendance">ATTENDANCE</label><select id="entriesAttendance">
+              <div class="filter-field"><label for="entriesAttendance">Attendance</label><select id="entriesAttendance">
                   <option value="">All attendance</option>
                   <option>Present</option>
                   <option>Absent</option>
                   <option value="Not Marked">Not marked</option>
-                </select></div><button class="button button-secondary filter-reset" id="clearFilters">Clear</button>
+                </select></div>
+              <button class="button button-secondary filter-reset" id="clearFilters" type="button">Clear</button>
             </div>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="data-table entries-table">
               <thead>
                 <tr>
-                  <th>SR. NO.</th>
-                  <th>DATE & TIME</th>
-                  <th>PARTY DETAILS</th>
-                  <th>PASSES</th>
-                  <th>STATUS</th>
-                  <th>ATTENDANCE</th>
-                  <th>REMARK</th>
-                  <th></th>
+                  <th>Sr. no.</th>
+                  <th>Date &amp; time</th>
+                  <th>Party details</th>
+                  <th>Passes</th>
+                  <th>Status</th>
+                  <th>Attendance</th>
+                  <th>Remark</th>
+                  <th><span class="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody id="entryRows">
-                <tr>
-                  <td colspan="8" class="empty-cell">Loading entries…</td>
-                </tr>
+                <tr class="state-row"><td colspan="8"><div class="state">Loading entries…</div></td></tr>
               </tbody>
             </table>
           </div>
-          <div class="table-footer"><span id="entryCountLabel">0 records</span><span>Sr. No. is sequential within each
-              event date.</span></div>
+          <div class="table-footer"><span id="entryCountLabel">0 records</span><span>Sr. no. is sequential within each event date.</span></div>
         </article>
       </section>
 
       <section class="page" id="page-reports">
         <div class="page-heading">
           <div>
-            <div class="eyebrow">DATA & EXPORT</div>
-            <h1>Reports & export</h1>
+            <h1>Reports &amp; export</h1>
             <p>Download a clean Excel workbook for your event records.</p>
           </div>
         </div>
         <div class="report-cards">
           <article class="panel report-card">
-            <div class="report-icon green">▤</div>
+            <div class="report-icon tone-a"><svg class="icon"><use href="#i-chart"/></svg></div>
             <h2>Single-day report</h2>
             <p>Export entries and daily inventory for one selected event date.</p>
-            <div class="field"><label for="reportDate">SELECT EVENT DATE</label><input type="date" id="reportDate">
-            </div><button class="button button-primary full-button" id="downloadDay">Download day report
-              <span>↓</span></button>
+            <div class="field"><label for="reportDate">Event date</label><input type="date" id="reportDate"></div>
+            <button class="button button-primary full-button" id="downloadDay"><svg class="icon"><use href="#i-download"/></svg>Download day report</button>
           </article>
           <article class="panel report-card">
-            <div class="report-icon blue">▦</div>
+            <div class="report-icon tone-b"><svg class="icon"><use href="#i-chart"/></svg></div>
             <h2>Date-range report</h2>
             <p>Export records across a selected period, including each day's summary.</p>
             <div class="date-range-fields">
-              <div class="field"><label for="reportFrom">FROM</label><input type="date" id="reportFrom"></div>
-              <div class="field"><label for="reportTo">TO</label><input type="date" id="reportTo"></div>
-            </div><button class="button button-primary full-button" id="downloadRange">Download range report
-              <span>↓</span></button>
+              <div class="field"><label for="reportFrom">From</label><input type="date" id="reportFrom"></div>
+              <div class="field"><label for="reportTo">To</label><input type="date" id="reportTo"></div>
+            </div>
+            <button class="button button-primary full-button" id="downloadRange"><svg class="icon"><use href="#i-download"/></svg>Download range report</button>
           </article>
           <article class="panel report-card">
-            <div class="report-icon violet">⇩</div>
+            <div class="report-icon tone-a"><svg class="icon"><use href="#i-chart"/></svg></div>
             <h2>Complete event history</h2>
             <p>Download all saved entries and the daily summary sheet in one workbook.</p>
-            <div class="report-includes"><span>✓ Pass register</span><span>✓ Daily summary</span><span>✓ Status &
-                attendance</span></div><button class="button button-secondary full-button" id="downloadAll">Download all
-              records <span>↓</span></button>
+            <div class="report-includes"><span><svg class="icon"><use href="#i-check"/></svg>Pass register</span><span><svg class="icon"><use href="#i-check"/></svg>Daily summary</span><span><svg class="icon"><use href="#i-check"/></svg>Status &amp; attendance</span></div>
+            <button class="button button-secondary full-button" id="downloadAll"><svg class="icon"><use href="#i-download"/></svg>Download all records</button>
           </article>
         </div>
-        <div class="report-note"><span>ⓘ</span>
-          <div><strong>What's included in Excel?</strong>
-            <p>Each workbook contains a Pass Entries sheet and a Daily Summary sheet. The register includes Sr. No.,
-              event date, creation time, party details, quantity, status, attendance and remarks.</p>
+        <div class="report-note">
+          <div>
+            <strong>What's included in Excel?</strong>
+            <p>Each workbook contains a Pass Entries sheet and a Daily Summary sheet. The register includes Sr. no., event date, creation time, party details, quantity, status, attendance and remarks.</p>
           </div>
         </div>
       </section>
@@ -291,34 +286,46 @@
       <section class="page" id="page-settings">
         <div class="page-heading">
           <div>
-            <div class="eyebrow">CONFIGURATION</div>
             <h1>Settings</h1>
-            <p>Configure the event name and default daily pass allocation.</p>
+            <p>Configure the event, daily pass allocation and how the app looks.</p>
           </div>
         </div>
         <article class="panel settings-panel">
           <div class="settings-section-head">
-            <div class="settings-icon">⚙</div>
+            <div class="settings-icon"><svg class="icon"><use href="#i-sun"/></svg></div>
+            <div>
+              <h2>Appearance</h2>
+              <p>System follows your device's light or dark setting.</p>
+            </div>
+          </div>
+          <div class="segmented" role="radiogroup" aria-label="Theme" id="themeChoices">
+            <button type="button" role="radio" aria-checked="false" data-theme-choice="system"><svg class="icon"><use href="#i-system"/></svg>System</button>
+            <button type="button" role="radio" aria-checked="false" data-theme-choice="light"><svg class="icon"><use href="#i-sun"/></svg>Light</button>
+            <button type="button" role="radio" aria-checked="false" data-theme-choice="dark"><svg class="icon"><use href="#i-moon"/></svg>Dark</button>
+          </div>
+        </article>
+        <article class="panel settings-panel">
+          <div class="settings-section-head">
+            <div class="settings-icon"><svg class="icon"><use href="#i-gear"/></svg></div>
             <div>
               <h2>Event configuration</h2>
               <p>These settings apply to this private tracker.</p>
             </div>
           </div>
-          <form id="settingsForm">
+          <form id="settingsForm" novalidate>
+            <div class="form-alert" id="settingsAlert" role="alert" hidden></div>
             <div class="settings-fields">
-              <div class="field"><label for="eventName">EVENT / SHOWROOM NAME</label><input type="text" id="eventName"
-                  maxlength="120" placeholder="Navaratri Pass Tracker"></div>
-              <div class="field"><label for="defaultLimit">DEFAULT DAILY PASS LIMIT</label><input type="number"
-                  id="defaultLimit" min="0" max="1000000" step="1" required><small>Used when a date's inventory is first
-                  created. Existing dates keep their own limits.</small></div>
+              <div class="field"><label for="eventName">Event / showroom name</label><input type="text" id="eventName" maxlength="120" placeholder="Navaratri Pass Tracker"></div>
+              <div class="field"><label for="defaultLimit">Default daily pass limit</label><input type="number" id="defaultLimit" min="0" max="1000000" step="1" inputmode="numeric" aria-describedby="hint-defaultLimit err-defaultLimit" required>
+                <small id="hint-defaultLimit">Used when a date's inventory is first created. Existing dates keep their own limits.</small>
+                <small class="field-error" id="err-defaultLimit"></small></div>
             </div>
-            <div class="settings-actions"><span class="form-hint">Changes are saved to MongoDB.</span><button
-                class="button button-primary" type="submit">Save settings <span>→</span></button></div>
+            <div class="settings-actions"><span class="form-hint">Changes are saved to MongoDB.</span><button class="button button-primary" type="submit" id="saveSettings">Save settings</button></div>
           </form>
         </article>
         <article class="panel settings-panel">
           <div class="settings-section-head">
-            <div class="settings-icon">ⓘ</div>
+            <div class="settings-icon"><svg class="icon"><use href="#i-alert"/></svg></div>
             <div>
               <h2>Inventory rules</h2>
               <p>How this tracker counts and allocates passes.</p>
@@ -333,16 +340,83 @@
           </ul>
         </article>
       </section>
-      <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </main>
+
+    <nav class="bottom-nav" aria-label="Main navigation (mobile)">
+      <button class="bn-item active" data-page="dashboard"><svg class="icon"><use href="#i-home"/></svg><span>Home</span></button>
+      <button class="bn-item" data-page="entries"><svg class="icon"><use href="#i-ticket"/></svg><span>Entries</span></button>
+      <button class="bn-add" data-new-entry aria-label="New entry"><svg class="icon"><use href="#i-plus"/></svg></button>
+      <button class="bn-item" data-page="reports"><svg class="icon"><use href="#i-chart"/></svg><span>Reports</span></button>
+      <button class="bn-item" data-page="settings"><svg class="icon"><use href="#i-gear"/></svg><span>Settings</span></button>
+    </nav>
   </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+  <!-- Add / edit entry modal -->
+  <div class="modal-backdrop" id="entryModal" hidden>
+    <article class="panel form-panel" id="entryFormPanel" role="dialog" aria-modal="true" aria-labelledby="entryFormTitle" aria-describedby="entryFormSub">
+      <div class="panel-heading">
+        <div>
+          <h2 id="entryFormTitle">Add pass entry</h2>
+          <p id="entryFormSub">Fields marked * are required.</p>
+        </div>
+        <button class="icon-button close-form" id="closeEntryForm" type="button" aria-label="Close form"><svg class="icon"><use href="#i-close"/></svg></button>
+      </div>
+      <form id="entryForm" novalidate>
+        <div class="modal-body">
+          <div class="form-alert" id="formAlert" role="alert" hidden></div>
+          <input type="hidden" id="editId">
+          <div class="form-grid">
+            <div class="field"><label for="entryDate">Event date <em>*</em></label>
+              <input type="date" id="entryDate" required aria-describedby="err-entryDate">
+              <small class="field-error" id="err-entryDate"></small></div>
+            <div class="field"><label for="partyName">Party name <em>*</em></label>
+              <input type="text" id="partyName" placeholder="Person or party name" maxlength="160" required autocomplete="off" aria-describedby="err-partyName">
+              <small class="field-error" id="err-partyName"></small></div>
+            <div class="field"><label for="partyPhone">Party phone number</label>
+              <input type="tel" id="partyPhone" placeholder="Contact number" maxlength="30" inputmode="tel" autocomplete="off" aria-describedby="err-partyPhone">
+              <small class="field-error" id="err-partyPhone"></small></div>
+            <div class="field"><label for="quantity">Pass quantity <em>*</em></label>
+              <input type="number" id="quantity" min="1" step="1" value="1" inputmode="numeric" required aria-describedby="hint-quantity err-quantity">
+              <small id="hint-quantity">Available for this date: <b id="formAvailable">—</b></small>
+              <small class="field-error" id="err-quantity"></small></div>
+            <div class="field"><label for="entryStatus">Status</label>
+              <select id="entryStatus">
+                <option>Pending</option>
+                <option>Sent</option>
+              </select></div>
+            <div class="field"><label for="attendance">Present / absent</label>
+              <select id="attendance">
+                <option value="Not Marked">Not marked</option>
+                <option>Present</option>
+                <option>Absent</option>
+              </select></div>
+            <div class="field field-full"><label for="remark">Remark</label>
+              <textarea id="remark" rows="3" placeholder="Add a note if needed" maxlength="1000" aria-describedby="err-remark"></textarea>
+              <small class="field-error" id="err-remark"></small></div>
+          </div>
+        </div>
+        <div class="form-footer">
+          <button type="button" class="button button-ghost-danger" id="deleteFromForm" hidden><svg class="icon"><use href="#i-trash"/></svg><span class="btn-label">Delete</span></button>
+          <span class="form-hint" id="formHint">Date and time of creation are recorded automatically.</span>
+          <div class="button-row">
+            <button type="button" class="button button-secondary" id="cancelEntry">Cancel</button>
+            <button type="submit" class="button button-primary" id="saveEntry">Save entry</button>
+          </div>
+        </div>
+      </form>
+    </article>
+  </div>
+
+  <!-- Delete confirmation modal -->
   <div class="modal-backdrop" id="confirmBackdrop" hidden>
-    <div class="confirm-modal">
-      <div class="confirm-symbol">!</div>
-      <h2>Delete this entry?</h2>
-      <p>This record will be permanently removed and its passes returned to inventory.</p>
-      <div class="button-row"><button class="button button-secondary" id="confirmCancel">Cancel</button><button
-          class="button button-danger" id="confirmDelete">Delete entry</button></div>
+    <div class="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+      <div class="confirm-symbol"><svg class="icon"><use href="#i-trash"/></svg></div>
+      <h2 id="confirmTitle">Delete this entry?</h2>
+      <p id="confirmText">This record will be permanently removed and its passes returned to inventory.</p>
+      <div class="form-alert" id="confirmAlert" role="alert" hidden></div>
+      <div class="button-row"><button class="button button-secondary" id="confirmCancel" type="button">Keep entry</button><button class="button button-danger" id="confirmDelete" type="button">Delete entry</button></div>
     </div>
   </div>
   <script src="/app.js"></script>

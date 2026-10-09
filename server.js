@@ -9,8 +9,26 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const MONGODB_URI = process.env.MONGODB_URI;
 
+app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
+// Every API error has the same shape: { error: "message", code: "SOME_CODE", field?: "fieldName" }
+class HttpError extends Error {
+  constructor(status, message, { code = "BAD_REQUEST", field } = {}) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.field = field;
+  }
+}
+const bad = (message, field) => new HttpError(400, message, { code: "VALIDATION", field });
+
+// Return a clear 503 instead of hanging when MongoDB is down.
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health" || mongoose.connection.readyState === 1) return next();
+  next(new HttpError(503, "The database isn't connected. Make sure MongoDB is running, then try again.", { code: "DB_UNAVAILABLE" }));
+});
 
 const settingsSchema = new mongoose.Schema({
   key: { type: String, unique: true, default: "main" },
@@ -45,6 +63,12 @@ const Entry = mongoose.model("Entry", entrySchema);
 function validDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     !Number.isNaN(Date.parse(value + "T00:00:00Z"));
+}
+function checkPhone(phone) {
+  if (!phone) return;
+  const digits = phone.replace(/\D/g, "").length;
+  if (phone.length > 30) throw bad("Phone number can be at most 30 characters.", "phone");
+  if (!/^[0-9+()\-\s./,]+$/.test(phone) || digits < 5) throw bad("Enter a valid phone number, for example +91 98765 43210.", "phone");
 }
 function asyncRoute(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -102,7 +126,7 @@ app.put("/api/settings", asyncRoute(async (req, res) => {
   const defaultDailyLimit = Number(req.body.defaultDailyLimit);
   const eventName = String(req.body.eventName || "Navaratri Pass Tracker").trim().slice(0, 120);
   if (!Number.isInteger(defaultDailyLimit) || defaultDailyLimit < 0 || defaultDailyLimit > 1000000) {
-    return res.status(400).json({ error: "Default daily pass limit must be a whole number from 0 to 1,000,000." });
+    throw bad("Default daily pass limit must be a whole number from 0 to 1,000,000.", "defaultDailyLimit");
   }
   const settings = await Settings.findOneAndUpdate(
     { key: "main" }, { $set: { defaultDailyLimit, eventName } },
@@ -112,20 +136,20 @@ app.put("/api/settings", asyncRoute(async (req, res) => {
 }));
 
 app.get("/api/inventory/:date", asyncRoute(async (req, res) => {
-  if (!validDate(req.params.date)) return res.status(400).json({ error: "Use a valid date in YYYY-MM-DD format." });
+  if (!validDate(req.params.date)) throw bad("Use a valid date in YYYY-MM-DD format.", "date");
   res.json(await inventorySummary(req.params.date));
 }));
 
 app.put("/api/inventory/:date", asyncRoute(async (req, res) => {
   const date = req.params.date;
   const limit = Number(req.body.limit);
-  if (!validDate(date)) return res.status(400).json({ error: "Use a valid date in YYYY-MM-DD format." });
+  if (!validDate(date)) throw bad("Use a valid date in YYYY-MM-DD format.", "date");
   if (!Number.isInteger(limit) || limit < 0 || limit > 1000000) {
-    return res.status(400).json({ error: "Daily pass limit must be a whole number from 0 to 1,000,000." });
+    throw bad("Daily pass limit must be a whole number from 0 to 1,000,000.", "limit");
   }
   const current = await inventorySummary(date);
   if (limit < current.allocated) {
-    return res.status(400).json({ error: `Limit cannot be lower than ${current.allocated} already allocated passes.` });
+    throw bad(`Limit cannot be lower than ${current.allocated} already allocated passes.`, "limit");
   }
   await Inventory.findOneAndUpdate({ date }, { $set: { limit } }, { upsert: true, new: true });
   res.json(await inventorySummary(date));
@@ -135,12 +159,12 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
   const { date, from, to, status, attendance, q } = req.query;
   const filter = {};
   if (date) {
-    if (!validDate(date)) return res.status(400).json({ error: "Invalid date." });
+    if (!validDate(date)) throw bad("Invalid date.", "date");
     filter.date = date;
   } else if (from || to) {
     filter.date = {};
-    if (from) { if (!validDate(from)) return res.status(400).json({ error: "Invalid start date." }); filter.date.$gte = from; }
-    if (to) { if (!validDate(to)) return res.status(400).json({ error: "Invalid end date." }); filter.date.$lte = to; }
+    if (from) { if (!validDate(from)) throw bad("Invalid start date.", "from"); filter.date.$gte = from; }
+    if (to) { if (!validDate(to)) throw bad("Invalid end date.", "to"); filter.date.$lte = to; }
   }
   if (status && ["Sent", "Pending"].includes(status)) filter.status = status;
   if (attendance && ["Present", "Absent", "Not Marked"].includes(attendance)) filter.attendance = attendance;
@@ -154,31 +178,43 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
 
 app.post("/api/entries", asyncRoute(async (req, res) => {
   const body = req.body || {};
-  if (!validDate(body.date)) return res.status(400).json({ error: "Select a valid event date." });
+  if (!validDate(body.date)) throw bad("Select a valid event date.", "date");
   const partyName = String(body.partyName || "").trim();
   const phone = String(body.phone || "").trim();
   const quantity = Number(body.quantity);
   const status = body.status || "Pending";
   const attendance = body.attendance || "Not Marked";
   const remark = String(body.remark || "").trim();
-  if (!partyName) return res.status(400).json({ error: "Party name is required." });
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) return res.status(400).json({ error: "Pass quantity must be a whole number greater than zero." });
-  if (!["Sent", "Pending"].includes(status)) return res.status(400).json({ error: "Invalid status." });
-  if (!["Present", "Absent", "Not Marked"].includes(attendance)) return res.status(400).json({ error: "Invalid attendance." });
+  if (!partyName) throw bad("Party name is required.", "partyName");
+  if (partyName.length > 160) throw bad("Party name can be at most 160 characters.", "partyName");
+  checkPhone(phone);
+  if (remark.length > 1000) throw bad("Remark can be at most 1,000 characters.", "remark");
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) throw bad("Pass quantity must be a whole number greater than zero.", "quantity");
+  if (!["Sent", "Pending"].includes(status)) throw bad("Invalid status.", "status");
+  if (!["Present", "Absent", "Not Marked"].includes(attendance)) throw bad("Invalid attendance.", "attendance");
 
   const summary = await inventorySummary(body.date);
-  if (summary.available < quantity) return res.status(400).json({ error: `Not enough passes available. Only ${summary.available} pass(es) remain for this date.` });
-  const last = await Entry.findOne({ date: body.date }).sort({ srNo: -1 }).select("srNo").lean();
-  const entry = await Entry.create({
-    date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, quantity, status, attendance, remark
-  });
+  if (summary.available < quantity) throw bad(`Not enough passes available. Only ${Math.max(0, summary.available)} pass(es) remain for this date.`, "quantity");
+  // Two people saving at the same moment can pick the same Sr. No.; the unique index
+  // rejects the second one, so try again with the next number.
+  let entry;
+  for (let attempt = 0; attempt < 5 && !entry; attempt++) {
+    const last = await Entry.findOne({ date: body.date }).sort({ srNo: -1 }).select("srNo").lean();
+    try {
+      entry = await Entry.create({
+        date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, quantity, status, attendance, remark
+      });
+    } catch (e) {
+      if (e.code !== 11000 || attempt === 4) throw e;
+    }
+  }
   res.status(201).json(entry);
 }));
 
 app.put("/api/entries/:id", asyncRoute(async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "Invalid entry ID." });
+  if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid entry ID.", { code: "BAD_ID" });
   const old = await Entry.findById(req.params.id);
-  if (!old) return res.status(404).json({ error: "Entry not found." });
+  if (!old) throw new HttpError(404, "Entry not found. It may have been deleted.", { code: "NOT_FOUND" });
   const body = req.body || {};
   const date = body.date || old.date;
   const partyName = String(body.partyName ?? old.partyName).trim();
@@ -187,16 +223,19 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
   const status = body.status || old.status;
   const attendance = body.attendance || old.attendance;
   const remark = String(body.remark ?? old.remark).trim();
-  if (!validDate(date)) return res.status(400).json({ error: "Select a valid event date." });
-  if (!partyName) return res.status(400).json({ error: "Party name is required." });
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) return res.status(400).json({ error: "Pass quantity must be a whole number greater than zero." });
-  if (!["Sent", "Pending"].includes(status) || !["Present", "Absent", "Not Marked"].includes(attendance)) return res.status(400).json({ error: "Invalid status or attendance." });
+  if (!validDate(date)) throw bad("Select a valid event date.", "date");
+  if (!partyName) throw bad("Party name is required.", "partyName");
+  if (partyName.length > 160) throw bad("Party name can be at most 160 characters.", "partyName");
+  checkPhone(phone);
+  if (remark.length > 1000) throw bad("Remark can be at most 1,000 characters.", "remark");
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) throw bad("Pass quantity must be a whole number greater than zero.", "quantity");
+  if (!["Sent", "Pending"].includes(status) || !["Present", "Absent", "Not Marked"].includes(attendance)) throw bad("Invalid status or attendance.");
 
   const oldDate = old.date;
   const oldQuantity = old.quantity;
   const targetSummary = await inventorySummary(date);
   const availableForThisEdit = targetSummary.available + (oldDate === date ? oldQuantity : 0);
-  if (availableForThisEdit < quantity) return res.status(400).json({ error: `Not enough passes available for ${date}. Only ${availableForThisEdit} pass(es) can be allocated.` });
+  if (availableForThisEdit < quantity) throw bad(`Not enough passes available for ${date}. Only ${Math.max(0, availableForThisEdit)} pass(es) can be allocated.`, "quantity");
 
   if (date !== oldDate) {
     const last = await Entry.findOne({ date }).sort({ srNo: -1 }).select("srNo").lean();
@@ -208,9 +247,9 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
 }));
 
 app.delete("/api/entries/:id", asyncRoute(async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "Invalid entry ID." });
+  if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid entry ID.", { code: "BAD_ID" });
   const deleted = await Entry.findByIdAndDelete(req.params.id);
-  if (!deleted) return res.status(404).json({ error: "Entry not found." });
+  if (!deleted) throw new HttpError(404, "Entry not found. It may have been deleted.", { code: "NOT_FOUND" });
   res.json({ ok: true });
 }));
 
@@ -218,12 +257,12 @@ app.get("/api/reports.xlsx", asyncRoute(async (req, res) => {
   const { date, from, to } = req.query;
   const filter = {};
   if (date) {
-    if (!validDate(date)) return res.status(400).json({ error: "Invalid report date." });
+    if (!validDate(date)) throw bad("Invalid report date.", "date");
     filter.date = date;
   } else if (from || to) {
     filter.date = {};
-    if (from) { if (!validDate(from)) return res.status(400).json({ error: "Invalid start date." }); filter.date.$gte = from; }
-    if (to) { if (!validDate(to)) return res.status(400).json({ error: "Invalid end date." }); filter.date.$lte = to; }
+    if (from) { if (!validDate(from)) throw bad("Invalid start date.", "from"); filter.date.$gte = from; }
+    if (to) { if (!validDate(to)) throw bad("Invalid end date.", "to"); filter.date.$lte = to; }
   }
   const entries = await Entry.find(filter).sort({ date: 1, srNo: 1 }).lean();
   const workbook = new ExcelJS.Workbook();
@@ -280,24 +319,63 @@ app.get("/api/reports.xlsx", asyncRoute(async (req, res) => {
   res.end();
 }));
 
+// Unknown API routes get JSON, not the HTML page.
+app.use("/api", (req, res, next) => next(new HttpError(404, "That API route doesn't exist.", { code: "NOT_FOUND" })));
+
 app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
+// Central error handler: turns anything thrown into a consistent JSON response.
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err);
-  if (err && err.code === 11000) return res.status(409).json({ error: "A record with this number already exists. Please retry." });
-  res.status(500).json({ error: "Something went wrong on the server. Check the server console for details." });
+  if (res.headersSent) {
+    // A download failed part-way; the connection can't carry a JSON body any more.
+    console.error("Error after response started:", err);
+    return res.destroy(err);
+  }
+  const send = (status, error, code, field) => res.status(status).json({ error, code, ...(field ? { field } : {}) });
+
+  if (err instanceof HttpError) return send(err.status, err.message, err.code, err.field);
+  if (err.type === "entity.parse.failed") return send(400, "The request body isn't valid JSON.", "BAD_JSON");
+  if (err.type === "entity.too.large") return send(413, "That request is too large.", "TOO_LARGE");
+  if (err.name === "ValidationError" && err.errors) {
+    const [field, detail] = Object.entries(err.errors)[0] || [];
+    return send(400, detail?.message || "Some details are invalid.", "VALIDATION", field);
+  }
+  if (err.name === "CastError") return send(400, `Invalid value for ${err.path || "a field"}.`, "VALIDATION", err.path);
+  if (err.code === 11000) return send(409, "Another entry took that number at the same time. Please try saving again.", "DUPLICATE");
+  if (["MongooseServerSelectionError", "MongoNetworkError", "MongoServerSelectionError", "MongoNotConnectedError"].includes(err.name) ||
+      /buffering timed out/i.test(err.message || "")) {
+    console.error("Database unavailable:", err.message);
+    return send(503, "The database isn't reachable right now. Make sure MongoDB is running, then try again.", "DB_UNAVAILABLE");
+  }
+  console.error(`${req.method} ${req.originalUrl} failed:`, err);
+  send(500, "Something went wrong on the server. Check the server console for details.", "SERVER_ERROR");
 });
+
+process.on("unhandledRejection", (reason) => console.error("Unhandled promise rejection:", reason));
+process.on("uncaughtException", (error) => { console.error("Uncaught exception:", error); process.exit(1); });
+
+mongoose.connection.on("disconnected", () => console.warn("MongoDB disconnected. API requests will return 503 until it reconnects."));
+mongoose.connection.on("reconnected", () => console.log("MongoDB reconnected."));
 
 async function start() {
   if (!MONGODB_URI) {
     console.error("Missing MONGODB_URI. Copy .env.example to .env and configure MongoDB.");
     process.exit(1);
   }
-  await mongoose.connect(MONGODB_URI);
+  await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000 });
   console.log("MongoDB connected.");
-  app.listen(PORT, () => console.log(`Navaratri Pass Tracker running at http://localhost:${PORT}`));
+  const server = app.listen(PORT, () => console.log(`Navaratri Pass Tracker running at http://localhost:${PORT}`));
+  server.on("error", (err) => {
+    console.error(err.code === "EADDRINUSE" ? `Port ${PORT} is already in use. Change PORT in .env or stop the other process.` : `Server error: ${err.message}`);
+    process.exit(1);
+  });
+  const shutdown = () => server.close(() => mongoose.connection.close().finally(() => process.exit(0)));
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 start().catch(err => {
   console.error("Unable to start application:", err.message);
+  console.error("Check that MongoDB is running and MONGODB_URI in .env is correct.");
   process.exit(1);
 });
