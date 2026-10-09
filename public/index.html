@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17211d">
+  <title>Navaratri Pass Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">N<span>+</span></div>
+        <div><strong>Navaratri</strong><small>PASS TRACKER</small></div>
+      </div>
+      <div class="nav-label">WORKSPACE</div>
+      <nav class="nav-list" aria-label="Main navigation">
+        <button class="nav-item active" data-page="dashboard"><span class="nav-icon">▦</span>Dashboard</button>
+        <button class="nav-item" data-page="entries"><span class="nav-icon">＋</span>Pass entries</button>
+        <button class="nav-item" data-page="reports"><span class="nav-icon">▤</span>Reports & export</button>
+        <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span>Settings</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="event-chip"><span class="live-dot"></span>
+          <div><strong>Private workspace</strong><small>Single event · Local admin</small></div>
+        </div>
+        <small class="sidebar-foot">NAVARATRI · PASS MANAGEMENT</small>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="mobile-menu icon-button" id="mobileMenu" aria-label="Open navigation">☰</button>
+        <div class="breadcrumbs"><span>Workspace</span><b>/</b><strong id="crumb">Dashboard</strong></div>
+        <div class="top-actions"><span class="today-label" id="todayLabel"></span>
+          <div class="avatar">A</div>
+        </div>
+      </header>
+
+      <section class="page active" id="page-dashboard">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">EVENT OVERVIEW</div>
+            <h1>Pass dashboard</h1>
+            <p>Keep every pass accounted for, from allocation to attendance.</p>
+          </div>
+          <div class="date-control"><label for="dashboardDate">EVENT DATE</label><input type="date" id="dashboardDate">
+          </div>
+        </div>
+        <div class="stats-grid">
+          <article class="stat-card">
+            <div class="stat-top"><span>Daily pass limit</span><span class="stat-icon sage">▣</span></div>
+            <div class="stat-value" id="statLimit">—</div>
+            <div class="stat-note">Configured for this date</div>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span>Passes allocated</span><span class="stat-icon blue">↗</span></div>
+            <div class="stat-value" id="statAllocated">—</div>
+            <div class="stat-note">Sent + pending quantities</div>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span>Available passes</span><span class="stat-icon green">✓</span></div>
+            <div class="stat-value" id="statAvailable">—</div>
+            <div class="stat-note">Ready to allocate</div>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span>Awaiting dispatch</span><span class="stat-icon amber">◷</span></div>
+            <div class="stat-value" id="statPending">—</div>
+            <div class="stat-note">Passes marked pending</div>
+          </article>
+        </div>
+        <div class="dashboard-grid">
+          <article class="panel inventory-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Daily inventory</h2>
+                <p id="inventoryDateText">Selected event date</p>
+              </div><span class="soft-tag">LIVE COUNT</span>
+            </div>
+            <div class="inventory-visual">
+              <div class="ring" id="inventoryRing">
+                <div class="ring-inner"><strong id="ringPercent">0%</strong><span>allocated</span></div>
+              </div>
+              <div class="inventory-details">
+                <div class="big-count"><strong id="inventoryRemaining">—</strong><span>passes remaining</span></div>
+                <div class="legend-row"><i class="legend-dot allocated-dot"></i><span>Allocated</span><b
+                    id="legendAllocated">—</b></div>
+                <div class="legend-row"><i class="legend-dot available-dot"></i><span>Available</span><b
+                    id="legendAvailable">—</b></div><button class="text-button" data-goto="settings">Adjust daily limit
+                  →</button>
+              </div>
+            </div>
+            <div class="inventory-warning" id="inventoryWarning" hidden>All available passes have been allocated for
+              this date.</div>
+          </article>
+          <article class="panel attendance-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Attendance snapshot</h2>
+                <p>For the selected event date</p>
+              </div><span class="stat-icon violet">◎</span>
+            </div>
+            <div class="attendance-total"><strong id="attendanceTotal">0</strong><span>entries recorded</span></div>
+            <div class="attendance-bar">
+              <div id="presentBar"></div>
+              <div id="absentBar"></div>
+              <div id="unmarkedBar"></div>
+            </div>
+            <div class="attendance-breakdown">
+              <div><i class="legend-dot present-dot"></i><span>Present</span><b id="presentCount">0</b></div>
+              <div><i class="legend-dot absent-dot"></i><span>Absent</span><b id="absentCount">0</b></div>
+              <div><i class="legend-dot unmarked-dot"></i><span>Not marked</span><b id="unmarkedCount">0</b></div>
+            </div>
+          </article>
+        </div>
+        <article class="panel recent-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Recent pass entries</h2>
+              <p>Latest records for the selected date</p>
+            </div><button class="button button-secondary button-small" data-goto="entries">View all entries
+              <span>→</span></button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>SR. NO.</th>
+                  <th>PARTY</th>
+                  <th>PHONE</th>
+                  <th>PASSES</th>
+                  <th>STATUS</th>
+                  <th>ATTENDANCE</th>
+                </tr>
+              </thead>
+              <tbody id="recentRows">
+                <tr>
+                  <td colspan="6" class="empty-cell">Loading entries…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="page-entries">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">PASS REGISTER</div>
+            <h1>Pass entries</h1>
+            <p>Create, update and track every party receiving passes.</p>
+          </div><button class="button button-primary" id="newEntryButton"><span>＋</span> New entry</button>
+        </div>
+        <div class="entry-summary" id="entryInventorySummary"></div>
+        <article class="panel form-panel" id="entryFormPanel" hidden>
+          <div class="panel-heading">
+            <div>
+              <h2 id="entryFormTitle">Add pass entry</h2>
+              <p>Fields marked with * are required.</p>
+            </div><button class="icon-button close-form" id="closeEntryForm" aria-label="Close form">×</button>
+          </div>
+          <form id="entryForm">
+            <input type="hidden" id="editId">
+            <div class="form-grid">
+              <div class="field"><label for="entryDate">Event date <em>*</em></label><input type="date" id="entryDate"
+                  required></div>
+              <div class="field"><label for="partyName">Party name <em>*</em></label><input type="text" id="partyName"
+                  placeholder="Enter person or party name" maxlength="160" required></div>
+              <div class="field"><label for="partyPhone">Party phone number</label><input type="tel" id="partyPhone"
+                  placeholder="Enter contact number" maxlength="30"></div>
+              <div class="field"><label for="quantity">Pass quantity <em>*</em></label><input type="number"
+                  id="quantity" min="1" step="1" value="1" required><small>Available for this date: <b
+                    id="formAvailable">—</b></small></div>
+              <div class="field"><label for="entryStatus">Status</label><select id="entryStatus">
+                  <option>Pending</option>
+                  <option>Sent</option>
+                </select></div>
+              <div class="field"><label for="attendance">Present / Absent</label><select id="attendance">
+                  <option value="Not Marked">Not marked</option>
+                  <option>Present</option>
+                  <option>Absent</option>
+                </select></div>
+              <div class="field field-full"><label for="remark">Remark</label><textarea id="remark" rows="3"
+                  placeholder="Add a note if needed…" maxlength="1000"></textarea></div>
+            </div>
+            <div class="form-footer"><span class="form-hint">Date & time of creation is recorded automatically.</span>
+              <div class="button-row"><button type="button" class="button button-secondary"
+                  id="cancelEntry">Cancel</button><button type="submit" class="button button-primary"
+                  id="saveEntry">Save entry <span>→</span></button></div>
+            </div>
+          </form>
+        </article>
+        <article class="panel">
+          <div class="filters">
+            <div class="search-box"><span>⌕</span><input id="entrySearch" type="search"
+                placeholder="Search party, phone or remark…"></div>
+            <div class="filter-controls">
+              <div class="filter-field"><label for="entriesDate">EVENT DATE</label><input type="date" id="entriesDate">
+              </div>
+              <div class="filter-field"><label for="entriesStatus">STATUS</label><select id="entriesStatus">
+                  <option value="">All statuses</option>
+                  <option>Sent</option>
+                  <option>Pending</option>
+                </select></div>
+              <div class="filter-field"><label for="entriesAttendance">ATTENDANCE</label><select id="entriesAttendance">
+                  <option value="">All attendance</option>
+                  <option>Present</option>
+                  <option>Absent</option>
+                  <option value="Not Marked">Not marked</option>
+                </select></div><button class="button button-secondary filter-reset" id="clearFilters">Clear</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>SR. NO.</th>
+                  <th>DATE & TIME</th>
+                  <th>PARTY DETAILS</th>
+                  <th>PASSES</th>
+                  <th>STATUS</th>
+                  <th>ATTENDANCE</th>
+                  <th>REMARK</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="entryRows">
+                <tr>
+                  <td colspan="8" class="empty-cell">Loading entries…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-footer"><span id="entryCountLabel">0 records</span><span>Sr. No. is sequential within each
+              event date.</span></div>
+        </article>
+      </section>
+
+      <section class="page" id="page-reports">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">DATA & EXPORT</div>
+            <h1>Reports & export</h1>
+            <p>Download a clean Excel workbook for your event records.</p>
+          </div>
+        </div>
+        <div class="report-cards">
+          <article class="panel report-card">
+            <div class="report-icon green">▤</div>
+            <h2>Single-day report</h2>
+            <p>Export entries and daily inventory for one selected event date.</p>
+            <div class="field"><label for="reportDate">SELECT EVENT DATE</label><input type="date" id="reportDate">
+            </div><button class="button button-primary full-button" id="downloadDay">Download day report
+              <span>↓</span></button>
+          </article>
+          <article class="panel report-card">
+            <div class="report-icon blue">▦</div>
+            <h2>Date-range report</h2>
+            <p>Export records across a selected period, including each day's summary.</p>
+            <div class="date-range-fields">
+              <div class="field"><label for="reportFrom">FROM</label><input type="date" id="reportFrom"></div>
+              <div class="field"><label for="reportTo">TO</label><input type="date" id="reportTo"></div>
+            </div><button class="button button-primary full-button" id="downloadRange">Download range report
+              <span>↓</span></button>
+          </article>
+          <article class="panel report-card">
+            <div class="report-icon violet">⇩</div>
+            <h2>Complete event history</h2>
+            <p>Download all saved entries and the daily summary sheet in one workbook.</p>
+            <div class="report-includes"><span>✓ Pass register</span><span>✓ Daily summary</span><span>✓ Status &
+                attendance</span></div><button class="button button-secondary full-button" id="downloadAll">Download all
+              records <span>↓</span></button>
+          </article>
+        </div>
+        <div class="report-note"><span>ⓘ</span>
+          <div><strong>What's included in Excel?</strong>
+            <p>Each workbook contains a Pass Entries sheet and a Daily Summary sheet. The register includes Sr. No.,
+              event date, creation time, party details, quantity, status, attendance and remarks.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-settings">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">CONFIGURATION</div>
+            <h1>Settings</h1>
+            <p>Configure the event name and default daily pass allocation.</p>
+          </div>
+        </div>
+        <article class="panel settings-panel">
+          <div class="settings-section-head">
+            <div class="settings-icon">⚙</div>
+            <div>
+              <h2>Event configuration</h2>
+              <p>These settings apply to this private tracker.</p>
+            </div>
+          </div>
+          <form id="settingsForm">
+            <div class="settings-fields">
+              <div class="field"><label for="eventName">EVENT / SHOWROOM NAME</label><input type="text" id="eventName"
+                  maxlength="120" placeholder="Navaratri Pass Tracker"></div>
+              <div class="field"><label for="defaultLimit">DEFAULT DAILY PASS LIMIT</label><input type="number"
+                  id="defaultLimit" min="0" max="1000000" step="1" required><small>Used when a date's inventory is first
+                  created. Existing dates keep their own limits.</small></div>
+            </div>
+            <div class="settings-actions"><span class="form-hint">Changes are saved to MongoDB.</span><button
+                class="button button-primary" type="submit">Save settings <span>→</span></button></div>
+          </form>
+        </article>
+        <article class="panel settings-panel">
+          <div class="settings-section-head">
+            <div class="settings-icon">ⓘ</div>
+            <div>
+              <h2>Inventory rules</h2>
+              <p>How this tracker counts and allocates passes.</p>
+            </div>
+          </div>
+          <ul class="rules-list">
+            <li>Pass quantity is reserved when an entry is saved, regardless of Sent or Pending status.</li>
+            <li>Available passes cannot go below zero.</li>
+            <li>Daily limits cannot be lowered below the quantity already allocated.</li>
+            <li>Entry creation time is stored automatically; event date can be selected separately.</li>
+            <li>Deleting an entry releases its allocated quantity back to that day's inventory.</li>
+          </ul>
+        </article>
+      </section>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+  <div class="modal-backdrop" id="confirmBackdrop" hidden>
+    <div class="confirm-modal">
+      <div class="confirm-symbol">!</div>
+      <h2>Delete this entry?</h2>
+      <p>This record will be permanently removed and its passes returned to inventory.</p>
+      <div class="button-row"><button class="button button-secondary" id="confirmCancel">Cancel</button><button
+          class="button button-danger" id="confirmDelete">Delete entry</button></div>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+
+</html>
