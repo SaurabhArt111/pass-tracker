@@ -38,7 +38,7 @@ A private, single-event pass and ticket tracking app built with Node.js, Express
 5. Set `MONGODB_URI` in `.env`. Local MongoDB example:
 
    ```env
-   PORT=3000
+   PORT=3099
    MONGODB_URI=mongodb://127.0.0.1:27017/navaratri_pass_tracker
    ```
 
@@ -54,11 +54,25 @@ For development with Node's watch mode, run `npm run dev`.
 
 ## How daily inventory works
 
-- The first time a date is opened, an inventory record is created using the default daily limit in Settings.
-- Existing dates retain their own limits if the default is later changed.
-- Pass quantity is allocated when the entry is saved, including Pending entries.
-- The limit cannot be reduced below already allocated passes.
-- Deleting an entry releases its quantity back to inventory.
+- Every date follows **Settings -> Default daily pass limit**. Changing the default updates all dates that have no custom limit, past and future.
+- To give one date its own limit, use **Limit for this date** on the dashboard. **Use default** removes the custom limit.
+- A limit (default or custom) cannot be set below the passes already allocated on the affected dates.
+- Pass quantity is allocated when the entry is saved, including Pending entries; deleting an entry releases it.
+
+## Database collections
+
+| Collection | Purpose |
+| --- | --- |
+| `settings` | One document: event name, default daily limit, schema version |
+| `inventories` | Only dates with a custom limit (`limitOverride`) or notes |
+| `salespeople` | Salesperson list (unique, case-insensitive name, active flag) |
+| `entries` | Pass entries; `salespersonId` links to a salesperson, `salesperson` keeps the name for lists/reports |
+
+Renaming a salesperson in Settings updates their existing entries. Removing one keeps the name on old entries.
+
+On startup the app upgrades data from the previous version automatically: the salesperson list moves out of `settings`, entry names are linked to salespeople, and old per-date limits copied from the default are dropped so those dates follow the default again. If you had hand-set a limit for a specific date before, set it again on the dashboard.
+
+Reports now include a **By Salesperson** sheet.
 
 ## Excel reports
 

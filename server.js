@@ -30,17 +30,30 @@ app.use("/api", (req, res, next) => {
   next(new HttpError(503, "The database isn't connected. Make sure MongoDB is running, then try again.", { code: "DB_UNAVAILABLE" }));
 });
 
+const SCHEMA_VERSION = 2;
+
+// One document ("main") holding app-wide configuration.
 const settingsSchema = new mongoose.Schema({
   key: { type: String, unique: true, default: "main" },
   defaultDailyLimit: { type: Number, min: 0, default: 80 },
   eventName: { type: String, default: "Navaratri Pass Tracker" },
-  salespersons: { type: [String], default: [] }
+  schemaVersion: { type: Number, default: SCHEMA_VERSION },
+  // Legacy (v1) stored names here. Kept only so old data can be migrated into the Salesperson collection.
+  salespersons: { type: [String], select: false }
 }, { timestamps: true });
 
+// A day only stores a limitOverride when someone set that date by hand.
+// Otherwise the day follows Settings -> default daily limit, so changing the default updates every such day.
 const inventorySchema = new mongoose.Schema({
   date: { type: String, required: true, unique: true, index: true },
-  limit: { type: Number, min: 0, required: true },
+  limitOverride: { type: Number, min: 0, default: null },
   notes: { type: String, default: "" }
+}, { timestamps: true });
+
+const salespersonSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true, maxlength: 120 },
+  nameKey: { type: String, required: true, unique: true, index: true },   // lower-cased name, for case-insensitive uniqueness
+  active: { type: Boolean, default: true }
 }, { timestamps: true });
 
 const entrySchema = new mongoose.Schema({
@@ -49,17 +62,20 @@ const entrySchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   partyName: { type: String, required: true, trim: true, maxlength: 160 },
   phone: { type: String, default: "", trim: true, maxlength: 30 },
-  salesperson: { type: String, default: "", trim: true, maxlength: 120 },
+  salesperson: { type: String, default: "", trim: true, maxlength: 120 },          // name snapshot (shown in lists / reports)
+  salespersonId: { type: mongoose.Schema.Types.ObjectId, ref: "Salesperson", default: null, index: true },
   quantity: { type: Number, required: true, min: 1, default: 1 },
-  status: { type: String, enum: ["Sent", "Pending"], default: "Pending" },
-  attendance: { type: String, enum: ["Present", "Absent", "Not Marked"], default: "Not Marked" },
+  status: { type: String, enum: ["Sent", "Pending"], default: "Pending", index: true },
+  attendance: { type: String, enum: ["Present", "Absent", "Not Marked"], default: "Not Marked", index: true },
   remark: { type: String, default: "", trim: true, maxlength: 1000 }
 }, { timestamps: true });
 
 entrySchema.index({ date: 1, srNo: 1 }, { unique: true });
+entrySchema.index({ createdAt: -1 });
 
 const Settings = mongoose.model("Settings", settingsSchema);
 const Inventory = mongoose.model("Inventory", inventorySchema);
+const Salesperson = mongoose.model("Salesperson", salespersonSchema);
 const Entry = mongoose.model("Entry", entrySchema);
 
 function validDate(value) {
@@ -79,7 +95,7 @@ async function getSettings() {
   try {
     return await Settings.findOneAndUpdate(
       { key: "main" },
-      { $setOnInsert: { key: "main", defaultDailyLimit: 80 } },
+      { $setOnInsert: { key: "main", defaultDailyLimit: 80, schemaVersion: SCHEMA_VERSION } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
   } catch (error) {
@@ -89,33 +105,57 @@ async function getSettings() {
     return settings;
   }
 }
-function uniqueSalespersons(names) {
-  const seen = new Set();
-  return names.filter(name => {
-    const key = name.toLocaleLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-function mergeSalespersons(existing, incoming) {
-  return uniqueSalespersons([...existing, ...incoming]);
-}
-async function ensureInventory(date) {
-  let inventory = await Inventory.findOne({ date });
-  if (!inventory) {
-    const settings = await getSettings();
-    try {
-      inventory = await Inventory.create({ date, limit: settings.defaultDailyLimit });
-    } catch (e) {
-      if (e.code !== 11000) throw e;
-      inventory = await Inventory.findOne({ date });
-    }
+const nameKey = (name) => String(name).trim().toLocaleLowerCase();
+
+// Find a salesperson by name (case-insensitive) or create it. Returns the document.
+async function findOrCreateSalesperson(name) {
+  const key = nameKey(name);
+  let doc = await Salesperson.findOne({ nameKey: key });
+  if (doc) return doc;
+  try {
+    return await Salesperson.create({ name: name.trim(), nameKey: key });
+  } catch (e) {
+    if (e.code !== 11000) throw e;
+    return Salesperson.findOne({ nameKey: key });
   }
-  return inventory;
+}
+async function resolveSalesperson(name) {
+  if (!name) return { salesperson: "", salespersonId: null };
+  const doc = await findOrCreateSalesperson(name);
+  return { salesperson: doc.name, salespersonId: doc._id };
+}
+async function listSalespersons() {
+  const docs = await Salesperson.find().sort({ nameKey: 1 }).lean();
+  const counts = await Entry.aggregate([
+    { $match: { salespersonId: { $ne: null } } },
+    { $group: { _id: "$salespersonId", entries: { $sum: 1 }, passes: { $sum: "$quantity" } } }
+  ]);
+  const byId = new Map(counts.map(c => [String(c._id), c]));
+  return docs.map(d => ({
+    _id: d._id, name: d.name, active: d.active,
+    entries: byId.get(String(d._id))?.entries || 0,
+    passes: byId.get(String(d._id))?.passes || 0
+  }));
+}
+async function settingsPayload() {
+  const settings = await getSettings();
+  const people = await listSalespersons();
+  return {
+    eventName: settings.eventName,
+    defaultDailyLimit: settings.defaultDailyLimit,
+    salespersons: people.filter(p => p.active).map(p => p.name),
+    salespersonDetails: people
+  };
+}
+
+// The limit for a date = its own override if one was set, otherwise the current default.
+async function effectiveLimit(date) {
+  const [settings, inventory] = await Promise.all([getSettings(), Inventory.findOne({ date }).lean()]);
+  const hasOverride = inventory?.limitOverride !== null && inventory?.limitOverride !== undefined;
+  return { limit: hasOverride ? inventory.limitOverride : settings.defaultDailyLimit, isCustom: hasOverride, defaultLimit: settings.defaultDailyLimit };
 }
 async function inventorySummary(date) {
-  const inventory = await ensureInventory(date);
+  const { limit, isCustom, defaultLimit } = await effectiveLimit(date);
   const entries = await Entry.find({ date }).lean();
   const allocated = entries.reduce((sum, item) => sum + item.quantity, 0);
   const sent = entries.filter(item => item.status === "Sent").reduce((sum, item) => sum + item.quantity, 0);
@@ -123,17 +163,37 @@ async function inventorySummary(date) {
   const present = entries.filter(item => item.attendance === "Present").length;
   const absent = entries.filter(item => item.attendance === "Absent").length;
   return {
-    date, limit: inventory.limit, allocated, available: inventory.limit - allocated,
+    date, limit, isCustom, defaultLimit, allocated, available: limit - allocated,
     sent, pending, entryCount: entries.length, present, absent,
     notMarked: entries.filter(item => item.attendance === "Not Marked").length
   };
 }
 
+// One-time upgrade of data saved by the previous version of the app.
+async function migrate() {
+  const settings = await getSettings();
+  const raw = await Settings.collection.findOne({ key: "main" });
+  // 1. Salesperson names that lived inside the settings document -> their own collection.
+  const legacyNames = Array.isArray(raw?.salespersons) ? raw.salespersons : [];
+  for (const name of legacyNames) { if (String(name).trim()) await findOrCreateSalesperson(String(name)); }
+  // 2. Names typed on entries but never added to the list, and entries without a link.
+  const unlinked = await Entry.distinct("salesperson", { salespersonId: null, salesperson: { $ne: "" } });
+  for (const name of unlinked) {
+    const doc = await findOrCreateSalesperson(name);
+    await Entry.updateMany({ salesperson: name, salespersonId: null }, { $set: { salespersonId: doc._id } });
+  }
+  // 3. Old inventory documents froze a copy of the default as "limit"; those days now follow the default again.
+  await Inventory.collection.updateMany({ limitOverride: { $exists: false } }, { $set: { limitOverride: null } });
+  await Inventory.collection.updateMany({ limit: { $exists: true } }, { $unset: { limit: "" } });
+  await Settings.collection.updateOne({ key: "main" }, { $set: { schemaVersion: SCHEMA_VERSION }, $unset: { salespersons: "" } });
+  if ((raw?.schemaVersion || 1) < SCHEMA_VERSION) console.log("Database upgraded to schema v" + SCHEMA_VERSION + ".");
+  return settings;
+}
+
 app.get("/api/health", (req, res) => res.json({ ok: true, database: mongoose.connection.readyState === 1 ? "connected" : "disconnected" }));
 
 app.get("/api/settings", asyncRoute(async (req, res) => {
-  const settings = await getSettings();
-  res.json({ eventName: settings.eventName, defaultDailyLimit: settings.defaultDailyLimit, salespersons: settings.salespersons });
+  res.json(await settingsPayload());
 }));
 
 app.put("/api/settings", asyncRoute(async (req, res) => {
@@ -142,22 +202,66 @@ app.put("/api/settings", asyncRoute(async (req, res) => {
   if (!Number.isInteger(defaultDailyLimit) || defaultDailyLimit < 0 || defaultDailyLimit > 1000000) {
     throw bad("Default daily pass limit must be a whole number from 0 to 1,000,000.", "defaultDailyLimit");
   }
-  const settings = await Settings.findOneAndUpdate(
+  // The new default applies to every date that has no custom limit, so it can't drop below what those dates already allocated.
+  const customDates = (await Inventory.find({ limitOverride: { $ne: null } }).select("date").lean()).map(i => i.date);
+  const busiest = await Entry.aggregate([
+    { $match: { date: { $nin: customDates } } },
+    { $group: { _id: "$date", allocated: { $sum: "$quantity" } } },
+    { $sort: { allocated: -1 } }, { $limit: 1 }
+  ]);
+  if (busiest[0] && defaultDailyLimit < busiest[0].allocated) {
+    throw bad(`Default limit can't be lower than ${busiest[0].allocated}, the passes already allocated on ${busiest[0]._id}.`, "defaultDailyLimit");
+  }
+  await Settings.findOneAndUpdate(
     { key: "main" }, { $set: { defaultDailyLimit, eventName } },
     { new: true, upsert: true, setDefaultsOnInsert: true }
   );
-  res.json({ eventName: settings.eventName, defaultDailyLimit: settings.defaultDailyLimit, salespersons: settings.salespersons });
+  res.json(await settingsPayload());
+}));
+
+app.get("/api/salespersons", asyncRoute(async (req, res) => {
+  res.json({ salespersons: await listSalespersons() });
 }));
 
 app.post("/api/salespersons", asyncRoute(async (req, res) => {
   const name = String(req.body?.name || "").trim();
   if (!name) throw bad("Enter a salesperson name.", "salesperson");
   if (name.length > 120) throw bad("Salesperson names can be at most 120 characters.", "salesperson");
-  const settings = await getSettings();
-  settings.salespersons = mergeSalespersons(settings.salespersons, [name]);
-  if (settings.salespersons.length > 1000) throw bad("The salesperson list cannot contain more than 1,000 names.", "salesperson");
-  await settings.save();
-  res.status(201).json({ salespersons: settings.salespersons });
+  if (await Salesperson.estimatedDocumentCount() >= 1000) throw bad("The salesperson list cannot contain more than 1,000 names.", "salesperson");
+  const doc = await findOrCreateSalesperson(name);
+  if (!doc.active) { doc.active = true; await doc.save(); }
+  const payload = await settingsPayload();
+  res.status(201).json({ salespersons: payload.salespersons, salespersonDetails: payload.salespersonDetails });
+}));
+
+app.put("/api/salespersons/:id", asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid salesperson ID.", { code: "BAD_ID" });
+  const doc = await Salesperson.findById(req.params.id);
+  if (!doc) throw new HttpError(404, "Salesperson not found.", { code: "NOT_FOUND" });
+  if (req.body.name !== undefined) {
+    const name = String(req.body.name).trim();
+    if (!name) throw bad("Enter a salesperson name.", "salesperson");
+    if (name.length > 120) throw bad("Salesperson names can be at most 120 characters.", "salesperson");
+    const clash = await Salesperson.findOne({ nameKey: nameKey(name), _id: { $ne: doc._id } });
+    if (clash) throw bad("Another salesperson already has that name.", "salesperson");
+    doc.name = name; doc.nameKey = nameKey(name);
+  }
+  if (req.body.active !== undefined) doc.active = Boolean(req.body.active);
+  await doc.save();
+  // Renaming must show up on existing entries and reports too.
+  await Entry.updateMany({ salespersonId: doc._id }, { $set: { salesperson: doc.name } });
+  const payload = await settingsPayload();
+  res.json({ salespersons: payload.salespersons, salespersonDetails: payload.salespersonDetails });
+}));
+
+app.delete("/api/salespersons/:id", asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid salesperson ID.", { code: "BAD_ID" });
+  const doc = await Salesperson.findByIdAndDelete(req.params.id);
+  if (!doc) throw new HttpError(404, "Salesperson not found.", { code: "NOT_FOUND" });
+  // Existing entries keep the name they were saved with, just no longer linked to a list item.
+  await Entry.updateMany({ salespersonId: doc._id }, { $set: { salespersonId: null } });
+  const payload = await settingsPayload();
+  res.json({ salespersons: payload.salespersons, salespersonDetails: payload.salespersonDetails });
 }));
 
 app.post("/api/salespersons/import", express.raw({
@@ -184,14 +288,16 @@ app.post("/api/salespersons/import", express.raw({
   }
   if (!names.length) throw bad("No salesperson names were found below the 'Salesperson' header.", "salespersonsFile");
   if (names.some(name => name.length > 120)) throw bad("Salesperson names can be at most 120 characters.", "salespersonsFile");
-  const settings = await getSettings();
-  const existing = uniqueSalespersons(settings.salespersons);
-  const merged = mergeSalespersons(existing, names);
-  const imported = merged.length - existing.length;
-  if (merged.length > 1000) throw bad("The salesperson list cannot contain more than 1,000 names.", "salespersonsFile");
-  settings.salespersons = merged;
-  await settings.save();
-  res.json({ salespersons: settings.salespersons, imported });
+  const before = await Salesperson.countDocuments();
+  const unique = [...new Map(names.map(n => [nameKey(n), n])).values()];
+  if (unique.length > 1000) throw bad("The salesperson list cannot contain more than 1,000 names.", "salespersonsFile");
+  for (const name of unique) {
+    const doc = await findOrCreateSalesperson(name);
+    if (!doc.active) { doc.active = true; await doc.save(); }
+  }
+  const imported = (await Salesperson.countDocuments()) - before;
+  const payload = await settingsPayload();
+  res.json({ salespersons: payload.salespersons, salespersonDetails: payload.salespersonDetails, imported });
 }));
 
 app.get("/api/inventory/:date", asyncRoute(async (req, res) => {
@@ -201,16 +307,19 @@ app.get("/api/inventory/:date", asyncRoute(async (req, res) => {
 
 app.put("/api/inventory/:date", asyncRoute(async (req, res) => {
   const date = req.params.date;
-  const limit = Number(req.body.limit);
   if (!validDate(date)) throw bad("Use a valid date in YYYY-MM-DD format.", "date");
-  if (!Number.isInteger(limit) || limit < 0 || limit > 1000000) {
+  // limit: null (or "") removes the custom limit so the date follows the default again.
+  const reset = req.body.limit === null || req.body.limit === "";
+  const limit = reset ? null : Number(req.body.limit);
+  if (!reset && (!Number.isInteger(limit) || limit < 0 || limit > 1000000)) {
     throw bad("Daily pass limit must be a whole number from 0 to 1,000,000.", "limit");
   }
   const current = await inventorySummary(date);
-  if (limit < current.allocated) {
+  const newLimit = reset ? current.defaultLimit : limit;
+  if (newLimit < current.allocated) {
     throw bad(`Limit cannot be lower than ${current.allocated} already allocated passes.`, "limit");
   }
-  await Inventory.findOneAndUpdate({ date }, { $set: { limit } }, { upsert: true, new: true });
+  await Inventory.findOneAndUpdate({ date }, { $set: { limitOverride: limit } }, { upsert: true, new: true });
   res.json(await inventorySummary(date));
 }));
 
@@ -273,7 +382,7 @@ app.post("/api/entries", asyncRoute(async (req, res) => {
     const last = await Entry.findOne({ date: body.date }).sort({ srNo: -1 }).select("srNo").lean();
     try {
       entry = await Entry.create({
-        date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, salesperson, quantity, status, attendance, remark
+        date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, ...(await resolveSalesperson(salesperson)), quantity, status, attendance, remark
       });
     } catch (e) {
       if (e.code !== 11000 || attempt === 4) throw e;
@@ -314,7 +423,7 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
     const last = await Entry.findOne({ date }).sort({ srNo: -1 }).select("srNo").lean();
     old.srNo = (last?.srNo || 0) + 1;
   }
-  Object.assign(old, { date, partyName, phone, salesperson, quantity, status, attendance, remark });
+  Object.assign(old, { date, partyName, phone, ...(await resolveSalesperson(salesperson)), quantity, status, attendance, remark });
   await old.save();
   res.json(old);
 }));
@@ -386,6 +495,26 @@ app.get("/api/reports.xlsx", asyncRoute(async (req, res) => {
     });
   }
 
+  const peopleSheet = workbook.addWorksheet("By Salesperson");
+  peopleSheet.columns = [
+    { header: "Salesperson", key: "name", width: 26 },
+    { header: "Entries", key: "entries", width: 12 },
+    { header: "Passes", key: "passes", width: 12 },
+    { header: "Sent", key: "sent", width: 12 },
+    { header: "Pending", key: "pending", width: 12 }
+  ];
+  peopleSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  peopleSheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF17211D" } };
+  const perPerson = new Map();
+  for (const e of entries) {
+    const key = e.salesperson || "(none)";
+    const row = perPerson.get(key) || { name: key, entries: 0, passes: 0, sent: 0, pending: 0 };
+    row.entries++; row.passes += e.quantity;
+    if (e.status === "Sent") row.sent += e.quantity; else row.pending += e.quantity;
+    perPerson.set(key, row);
+  }
+  [...perPerson.values()].sort((a, b) => b.passes - a.passes).forEach(r => peopleSheet.addRow(r));
+
   const filename = date ? `navaratri-report-${date}.xlsx` : (from || to ? `navaratri-report-${from || "start"}-to-${to || "end"}.xlsx` : "navaratri-report-all-records.xlsx");
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -439,6 +568,7 @@ async function start() {
   }
   await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000 });
   console.log("MongoDB connected.");
+  await migrate();
   const server = app.listen(PORT, () => console.log(`Navaratri Pass Tracker running at http://localhost:${PORT}`));
   server.on("error", (err) => {
     console.error(err.code === "EADDRINUSE" ? `Port ${PORT} is already in use. Change PORT in .env or stop the other process.` : `Server error: ${err.message}`);

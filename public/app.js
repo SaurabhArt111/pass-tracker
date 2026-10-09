@@ -348,6 +348,11 @@ async function loadDashboard() {
     $("inventoryRing").style.setProperty("--pct", `${pct}%`);
     $("ringPercent").textContent = `${pct}%`;
     $("inventoryRing").setAttribute("aria-label", `${pct}% of daily passes allocated`);
+    $("dateLimit").value = summary.isCustom ? summary.limit : "";
+    $("dateLimit").placeholder = `Default: ${num(summary.defaultLimit)}`;
+    $("resetDateLimit").hidden = !summary.isCustom;
+    $("limitNote").textContent = summary.isCustom ? `Custom limit. Default is ${num(summary.defaultLimit)}.` : "Following the default limit.";
+    setFieldError("dateLimit", "");
     $("inventoryWarning").hidden = !(summary.available <= 0 && summary.limit > 0);
     $("attendanceTotal").textContent = num(summary.entryCount);
     $("presentCount").textContent = summary.present;
@@ -375,6 +380,24 @@ async function loadDashboard() {
     reportError(err);
   }
 }
+
+async function saveDateLimit(limit) {
+  const date = state.dashboardDate;
+  try {
+    await api(`/api/inventory/${date}`, { method: "PUT", body: JSON.stringify({ limit }) });
+    toast(limit === null ? "This date now follows the default limit." : "Limit updated for this date.");
+    await loadDashboard();
+  } catch (err) {
+    if (err.field === "limit") setFieldError("dateLimit", err.message); else reportError(err);
+  }
+}
+$("limitForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const raw = $("dateLimit").value, n = Number(raw);
+  if (raw === "" || !Number.isInteger(n) || n < 0 || n > 1000000) return setFieldError("dateLimit", "Enter a whole number from 0 to 1,000,000.");
+  saveDateLimit(n);
+});
+$("resetDateLimit").addEventListener("click", () => saveDateLimit(null));
 
 /* ---------- Entries ---------- */
 let entriesReq = 0;
@@ -410,14 +433,14 @@ async function loadEntries() {
     }
     rows.innerHTML = entries.map(e => `<tr ${rowAttrs(e)}${e.remark ? " data-has-remark=\"true\"" : ""}>
       <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
-      <td class="c-time"><span class="when">${esc(prettyDateTime(e.createdAt))}</span><div class="sub-date">${esc(prettyDate(e.date))}</div></td>
-      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong><small>${esc(e.phone || "No phone number")}</small>${e.salesperson ? `<small>Salesperson: ${esc(e.salesperson)}</small>` : ""}<small class="entry-event-date">Event: ${esc(prettyDate(e.date))}</small></div></td>
-      <td class="c-qty"><strong>${e.quantity}</strong> <span>pass${e.quantity === 1 ? "" : "es"}</span></td>
+      <td class="c-time"><span class="when">${esc(prettyDate(e.date))}</span><div class="sub-date">Added ${esc(prettyDateTime(e.createdAt))}</div></td>
+      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong><small>${esc([e.phone, e.salesperson].filter(Boolean).join(" · ") || "No phone")}</small></div></td>
+      <td class="c-qty"><strong>${e.quantity}</strong><span class="qty-word"> pass${e.quantity === 1 ? "" : "es"}</span></td>
       <td class="c-status">${statusPill(e.status)}</td>
       <td class="c-att">${attendancePill(e.attendance)}</td>
       <td class="c-remark${e.remark ? "" : " is-empty"}" title="${esc(e.remark)}">${esc(e.remark || "—")}</td>
       <td class="c-actions"><div class="action-buttons">
-        <button class="mini-action message" type="button" data-whatsapp="${esc(e._id)}" ${whatsappDraft(e) ? "" : "disabled"} title="${whatsappDraft(e) ? "Send message on WhatsApp" : "Add one valid phone number to send a message"}" aria-label="Send message to ${esc(e.partyName)} on WhatsApp">${icon("send")}<span>Send message</span></button>
+        <button class="mini-action message" type="button" data-whatsapp="${esc(e._id)}" ${whatsappDraft(e) ? "" : "disabled"} title="${whatsappDraft(e) ? "Send message on WhatsApp" : "Add one valid phone number to send a message"}" aria-label="Send message to ${esc(e.partyName)} on WhatsApp">${icon("send")}<span>Message</span></button>
         <button class="mini-action" type="button" data-edit="${esc(e._id)}" title="Edit entry" aria-label="Edit entry ${srLabel(e.srNo)}">${icon("edit")}</button>
         <button class="mini-action delete" type="button" data-delete="${esc(e._id)}" title="Delete entry" aria-label="Delete entry ${srLabel(e.srNo)}">${icon("trash")}</button>
       </div></td></tr>`).join("");
@@ -447,7 +470,46 @@ function renderSalespersonOptions() {
     return option;
   }));
   $("salespersonCount").textContent = `${names.length} salesperson${names.length === 1 ? "" : "s"} available.`;
+  renderPeopleList();
 }
+function renderPeopleList() {
+  const people = state.settings.salespersonDetails || [];
+  $("peopleList").innerHTML = people.length ? people.map(p => `<div class="person-row${p.active ? "" : " is-inactive"}" data-person="${esc(p._id)}">
+      <div class="person-name"><strong>${esc(p.name)}</strong><small>${p.entries} entr${p.entries === 1 ? "y" : "ies"} · ${num(p.passes)} pass${p.passes === 1 ? "" : "es"}${p.active ? "" : " · hidden from list"}</small></div>
+      <div class="action-buttons">
+        <button class="mini-action" type="button" data-person-rename="${esc(p._id)}" title="Rename" aria-label="Rename ${esc(p.name)}">${icon("edit")}</button>
+        <button class="mini-action" type="button" data-person-toggle="${esc(p._id)}" title="${p.active ? "Hide from dropdown" : "Show in dropdown"}" aria-label="${p.active ? "Hide" : "Show"} ${esc(p.name)}">${icon(p.active ? "check" : "user")}</button>
+        <button class="mini-action delete" type="button" data-person-delete="${esc(p._id)}" title="Remove" aria-label="Remove ${esc(p.name)}">${icon("trash")}</button>
+      </div></div>`).join("") : "";
+}
+function applyPeople(result) {
+  state.settings.salespersons = result.salespersons;
+  state.settings.salespersonDetails = result.salespersonDetails;
+  renderSalespersonOptions();
+}
+$("peopleList").addEventListener("click", async (event) => {
+  const rename = event.target.closest("[data-person-rename]");
+  const toggle = event.target.closest("[data-person-toggle]");
+  const del = event.target.closest("[data-person-delete]");
+  const id = (rename || toggle || del)?.dataset.personRename || toggle?.dataset.personToggle || del?.dataset.personDelete;
+  if (!id) return;
+  const person = (state.settings.salespersonDetails || []).find(p => p._id === id);
+  if (!person) return;
+  try {
+    if (rename) {
+      const name = window.prompt("Rename salesperson (existing entries are updated too):", person.name);
+      if (name === null || !name.trim() || name.trim() === person.name) return;
+      applyPeople(await api(`/api/salespersons/${id}`, { method: "PUT", body: JSON.stringify({ name }) }));
+      toast("Salesperson renamed.");
+    } else if (toggle) {
+      applyPeople(await api(`/api/salespersons/${id}`, { method: "PUT", body: JSON.stringify({ active: !person.active }) }));
+    } else if (del) {
+      if (!window.confirm(`Remove ${person.name} from the list? Their ${person.entries} existing entr${person.entries === 1 ? "y keeps" : "ies keep"} the name.`)) return;
+      applyPeople(await api(`/api/salespersons/${id}`, { method: "DELETE" }));
+      toast("Salesperson removed.");
+    }
+  } catch (err) { reportError(err); }
+});
 
 /* ==========================================================================
    Form helpers (inline errors)
@@ -687,8 +749,7 @@ $("addSalesperson").addEventListener("click", async () => {
   setBusy($("addSalesperson"), true, "Adding…", "Add");
   try {
     const result = await api("/api/salespersons", { method: "POST", body: JSON.stringify({ name }) });
-    state.settings.salespersons = result.salespersons;
-    renderSalespersonOptions();
+    applyPeople(result);
     $("salesperson").value = name;
     setFieldError("salesperson", "");
     state.formDirty = true;
@@ -804,7 +865,8 @@ $("settingsForm").addEventListener("submit", async (event) => {
   try {
     state.settings = await api("/api/settings", { method: "PUT", body: JSON.stringify({ eventName: $("eventName").value.trim(), defaultDailyLimit: limit }) });
     renderSalespersonOptions();
-    toast("Settings saved.");
+    toast("Settings saved. All dates without a custom limit now use the new default.");
+    refreshCurrentPage();
   } catch (err) {
     console.error(err);
     if (err.field && FIELD_FOR[err.field] === "defaultLimit") setFieldError("defaultLimit", err.message);
@@ -829,8 +891,7 @@ $("salespersonImportForm").addEventListener("submit", async (event) => {
       body: file,
       headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
     });
-    state.settings.salespersons = result.salespersons;
-    renderSalespersonOptions();
+    applyPeople(result);
     $("salespersonsFile").value = "";
     toast(`${result.imported} new salesperson${result.imported === 1 ? "" : "s"} imported.`);
   } catch (err) {
