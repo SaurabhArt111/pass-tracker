@@ -4,13 +4,18 @@ const express = require("express");
 const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
 const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const MONGODB_URI = process.env.MONGODB_URI;
+const BACKUP_DIR = path.resolve(process.env.BACKUP_DIR || path.join(__dirname, "backups"));
+const BACKUP_KEEP_DAYS = Number(process.env.BACKUP_KEEP_DAYS || 30);
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "1mb" }));
+// The restore route has its own, larger JSON limit.
+app.use((req, res, next) => req.path === "/api/backup/restore" ? next() : express.json({ limit: "1mb" })(req, res, next));
 app.use(express.static(path.join(__dirname, "public")));
 
 // Every API error has the same shape: { error: "message", code: "SOME_CODE", field?: "fieldName" }
@@ -30,7 +35,7 @@ app.use("/api", (req, res, next) => {
   next(new HttpError(503, "The database isn't connected. Make sure MongoDB is running, then try again.", { code: "DB_UNAVAILABLE" }));
 });
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // One document ("main") holding app-wide configuration.
 const settingsSchema = new mongoose.Schema({
@@ -67,13 +72,42 @@ const entrySchema = new mongoose.Schema({
   quantity: { type: Number, required: true, min: 1, default: 1 },
   status: { type: String, enum: ["Sent", "Pending"], default: "Pending", index: true },
   attendance: { type: String, enum: ["Present", "Absent", "Not Marked"], default: "Not Marked", index: true },
-  remark: { type: String, default: "", trim: true, maxlength: 1000 }
+  remark: { type: String, default: "", trim: true, maxlength: 1000 },
+  // Entries are never erased: deleting just sets deletedAt, and they can be restored from the Trash.
+  deletedAt: { type: Date, default: null, index: true }
 }, { timestamps: true });
 
 entrySchema.index({ date: 1, srNo: 1 }, { unique: true });
 entrySchema.index({ createdAt: -1 });
 
+// Every create / edit / delete / restore keeps a copy of the entry as it was, so nothing is ever overwritten silently.
+const revisionSchema = new mongoose.Schema({
+  entryId: { type: mongoose.Schema.Types.ObjectId, index: true },
+  action: { type: String, enum: ["create", "update", "delete", "restore"], required: true },
+  snapshot: { type: mongoose.Schema.Types.Mixed },
+  at: { type: Date, default: Date.now }
+});
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, trim: true },
+  usernameKey: { type: String, required: true, unique: true },
+  passwordHash: { type: String, required: true },
+  salt: { type: String, required: true },
+  usingDefaultPassword: { type: Boolean, default: false },
+  passwordChangedAt: { type: Date, default: Date.now }
+}, { timestamps: true });
+
+const sessionSchema = new mongoose.Schema({
+  tokenHash: { type: String, required: true, unique: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+  userAgent: { type: String, default: "" },
+  expiresAt: { type: Date, required: true, index: { expires: 0 } }
+}, { timestamps: true });
+
 const Settings = mongoose.model("Settings", settingsSchema);
+const Revision = mongoose.model("Revision", revisionSchema);
+const User = mongoose.model("User", userSchema);
+const Session = mongoose.model("Session", sessionSchema);
 const Inventory = mongoose.model("Inventory", inventorySchema);
 const Salesperson = mongoose.model("Salesperson", salespersonSchema);
 const Entry = mongoose.model("Entry", entrySchema);
@@ -127,7 +161,7 @@ async function resolveSalesperson(name) {
 async function listSalespersons() {
   const docs = await Salesperson.find().sort({ nameKey: 1 }).lean();
   const counts = await Entry.aggregate([
-    { $match: { salespersonId: { $ne: null } } },
+    { $match: { salespersonId: { $ne: null }, deletedAt: null } },
     { $group: { _id: "$salespersonId", entries: { $sum: 1 }, passes: { $sum: "$quantity" } } }
   ]);
   const byId = new Map(counts.map(c => [String(c._id), c]));
@@ -156,7 +190,7 @@ async function effectiveLimit(date) {
 }
 async function inventorySummary(date) {
   const { limit, isCustom, defaultLimit } = await effectiveLimit(date);
-  const entries = await Entry.find({ date }).lean();
+  const entries = await Entry.find({ date, deletedAt: null }).lean();
   const allocated = entries.reduce((sum, item) => sum + item.quantity, 0);
   const sent = entries.filter(item => item.status === "Sent").reduce((sum, item) => sum + item.quantity, 0);
   const pending = entries.filter(item => item.status === "Pending").reduce((sum, item) => sum + item.quantity, 0);
@@ -185,10 +219,289 @@ async function migrate() {
   // 3. Old inventory documents froze a copy of the default as "limit"; those days now follow the default again.
   await Inventory.collection.updateMany({ limitOverride: { $exists: false } }, { $set: { limitOverride: null } });
   await Inventory.collection.updateMany({ limit: { $exists: true } }, { $unset: { limit: "" } });
+  await Entry.collection.updateMany({ deletedAt: { $exists: false } }, { $set: { deletedAt: null } });
   await Settings.collection.updateOne({ key: "main" }, { $set: { schemaVersion: SCHEMA_VERSION }, $unset: { salespersons: "" } });
   if ((raw?.schemaVersion || 1) < SCHEMA_VERSION) console.log("Database upgraded to schema v" + SCHEMA_VERSION + ".");
   return settings;
 }
+
+
+/* ==========================================================================
+   Revisions
+   ========================================================================== */
+async function logRevision(entry, action) {
+  try {
+    const snapshot = typeof entry.toObject === "function" ? entry.toObject() : entry;
+    await Revision.create({ entryId: snapshot._id, action, snapshot });
+  } catch (err) {
+    console.error("Could not record entry revision:", err.message);   // never block the user's save
+  }
+}
+
+/* ==========================================================================
+   Authentication (single admin, password stored as a salted scrypt hash)
+   ========================================================================== */
+const DEFAULT_USERNAME = "SSLAdmin";
+const DEFAULT_PASSWORD = "SSLAdmin";
+const SESSION_COOKIE = "pt_session";
+const SESSION_DAYS = 14;
+
+const scrypt = (password, salt) => new Promise((resolve, reject) =>
+  crypto.scrypt(password, salt, 64, (err, key) => err ? reject(err) : resolve(key.toString("hex"))));
+const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
+async function makePasswordFields(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  return { salt, passwordHash: await scrypt(password, salt) };
+}
+async function passwordMatches(user, password) {
+  const candidate = Buffer.from(await scrypt(String(password), user.salt), "hex");
+  const stored = Buffer.from(user.passwordHash, "hex");
+  return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
+}
+async function ensureDefaultUser() {
+  if (await User.estimatedDocumentCount() > 0) return;
+  try {
+    await User.create({
+      username: DEFAULT_USERNAME, usernameKey: DEFAULT_USERNAME.toLowerCase(),
+      ...(await makePasswordFields(DEFAULT_PASSWORD)), usingDefaultPassword: true
+    });
+    console.log(`Created the default login: ID "${DEFAULT_USERNAME}", password "${DEFAULT_PASSWORD}". Change it in Settings -> Account.`);
+  } catch (e) { if (e.code !== 11000) throw e; }
+}
+function readCookie(req, name) {
+  const header = req.headers.cookie || "";
+  for (const part of header.split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i).trim() === name) { try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return ""; } }
+  }
+  return "";
+}
+function cookieFlags(req, maxAgeSeconds) {
+  const secure = req.secure || req.headers["x-forwarded-proto"] === "https";
+  return `Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
+}
+async function startSession(req, res, user) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await Session.create({
+    tokenHash: sha256(token), userId: user._id, userAgent: String(req.headers["user-agent"] || "").slice(0, 200),
+    expiresAt: new Date(Date.now() + SESSION_DAYS * 86400000)
+  });
+  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${token}; ${cookieFlags(req, SESSION_DAYS * 86400)}`);
+}
+const authPayload = (user) => ({ user: { username: user.username }, usingDefaultPassword: !!user.usingDefaultPassword });
+
+// Too many wrong passwords from one address -> short lock-out.
+const loginAttempts = new Map();
+function checkLoginLock(ip) {
+  const rec = loginAttempts.get(ip);
+  if (rec && rec.until > Date.now()) {
+    const minutes = Math.ceil((rec.until - Date.now()) / 60000);
+    throw new HttpError(429, `Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`, { code: "LOCKED" });
+  }
+}
+function recordLoginFailure(ip) {
+  const rec = loginAttempts.get(ip) || { count: 0, until: 0 };
+  rec.count += 1;
+  if (rec.count >= 5) { rec.until = Date.now() + 5 * 60000; rec.count = 0; }
+  loginAttempts.set(ip, rec);
+}
+
+const PUBLIC_API = new Set(["/health", "/auth/login", "/auth/logout"]);
+app.use("/api", asyncRoute(async (req, res, next) => {
+  if (PUBLIC_API.has(req.path)) return next();
+  const token = readCookie(req, SESSION_COOKIE);
+  const session = token ? await Session.findOne({ tokenHash: sha256(token), expiresAt: { $gt: new Date() } }) : null;
+  const user = session ? await User.findById(session.userId) : null;
+  if (!user) throw new HttpError(401, "Please sign in to continue.", { code: "UNAUTHENTICATED" });
+  req.user = user; req.session = session;
+  next();
+}));
+
+// After any successful change, queue a fresh backup file.
+app.use("/api", (req, res, next) => {
+  if (req.method !== "GET" && !req.path.startsWith("/auth/")) {
+    res.on("finish", () => { if (res.statusCode < 400) scheduleBackup(); });
+  }
+  next();
+});
+
+app.post("/api/auth/login", asyncRoute(async (req, res) => {
+  const ip = req.ip || "unknown";
+  checkLoginLock(ip);
+  const username = String(req.body?.username || "").trim();
+  const password = String(req.body?.password || "");
+  if (!username || !password) throw new HttpError(400, "Enter your ID and password.", { code: "VALIDATION" });
+  const user = await User.findOne({ usernameKey: username.toLowerCase() });
+  // Do the hash work even for unknown IDs so response time doesn't reveal which IDs exist.
+  const ok = user ? await passwordMatches(user, password) : (await scrypt(password, "0".repeat(32)), false);
+  if (!ok) { recordLoginFailure(ip); throw new HttpError(401, "Wrong ID or password.", { code: "BAD_CREDENTIALS" }); }
+  loginAttempts.delete(ip);
+  await startSession(req, res, user);
+  res.json(authPayload(user));
+}));
+
+app.post("/api/auth/logout", asyncRoute(async (req, res) => {
+  const token = readCookie(req, SESSION_COOKIE);
+  if (token) await Session.deleteOne({ tokenHash: sha256(token) });
+  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; ${cookieFlags(req, 0)}`);
+  res.json({ ok: true });
+}));
+
+app.get("/api/auth/me", (req, res) => res.json(authPayload(req.user)));
+
+app.post("/api/auth/password", asyncRoute(async (req, res) => {
+  const current = String(req.body?.currentPassword || "");
+  const next = String(req.body?.newPassword || "");
+  if (!(await passwordMatches(req.user, current))) throw bad("Current password is incorrect.", "currentPassword");
+  if (next.length < 8) throw bad("New password must be at least 8 characters.", "newPassword");
+  if (next.length > 128) throw bad("New password can be at most 128 characters.", "newPassword");
+  if (next === current) throw bad("Choose a password different from the current one.", "newPassword");
+  if (next.toLowerCase() === DEFAULT_PASSWORD.toLowerCase()) throw bad("That's the default password. Choose something else.", "newPassword");
+  Object.assign(req.user, await makePasswordFields(next), { usingDefaultPassword: false, passwordChangedAt: new Date() });
+  await req.user.save();
+  await Session.deleteMany({ userId: req.user._id, _id: { $ne: req.session._id } });   // sign out other devices
+  res.json({ ok: true });
+}));
+
+/* ==========================================================================
+   Backups: automatic JSON files on disk + manual download / restore
+   ========================================================================== */
+async function collectBackup() {
+  const [settings, inventories, salespeople, entries, revisions] = await Promise.all([
+    Settings.find().lean(), Inventory.find().lean(), Salesperson.find().lean(),
+    Entry.find().sort({ date: 1, srNo: 1 }).lean(), Revision.find().sort({ at: 1 }).lean()
+  ]);
+  return {
+    app: "navaratri-pass-tracker", format: 1, createdAt: new Date().toISOString(),
+    counts: { entries: entries.length, activeEntries: entries.filter(e => !e.deletedAt).length, salespeople: salespeople.length, inventories: inventories.length, revisions: revisions.length },
+    data: { settings, inventories, salespeople, entries, revisions }
+  };
+}
+const todayStamp = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+let backupTimer = null, backupRunning = false, lastBackup = null;
+function scheduleBackup() {
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => writeBackup().catch(err => console.error("Automatic backup failed:", err.message)), 4000);
+}
+async function writeBackup() {
+  if (backupRunning || mongoose.connection.readyState !== 1) return;
+  backupRunning = true;
+  try {
+    await fs.promises.mkdir(BACKUP_DIR, { recursive: true });
+    const backup = await collectBackup();
+    const json = JSON.stringify(backup);
+    const write = async (name) => {
+      const target = path.join(BACKUP_DIR, name), temp = target + ".tmp";
+      await fs.promises.writeFile(temp, json);
+      await fs.promises.rename(temp, target);          // atomic: a crash never leaves a half-written backup
+    };
+    const latest = path.join(BACKUP_DIR, "backup-latest.json");
+    if (fs.existsSync(latest)) await fs.promises.copyFile(latest, path.join(BACKUP_DIR, "backup-previous.json"));
+    await write("backup-latest.json");
+    await write(`backup-${todayStamp()}.json`);
+    // Drop daily files older than the retention window.
+    const cutoff = Date.now() - BACKUP_KEEP_DAYS * 86400000;
+    for (const file of await fs.promises.readdir(BACKUP_DIR)) {
+      if (!/^backup-\d{4}-\d{2}-\d{2}\.json$/.test(file)) continue;
+      const stat = await fs.promises.stat(path.join(BACKUP_DIR, file));
+      if (stat.mtimeMs < cutoff) await fs.promises.unlink(path.join(BACKUP_DIR, file));
+    }
+    lastBackup = { at: new Date().toISOString(), entries: backup.counts.activeEntries };
+  } finally { backupRunning = false; }
+}
+
+app.get("/api/backup/status", asyncRoute(async (req, res) => {
+  let files = [];
+  try {
+    files = await Promise.all((await fs.promises.readdir(BACKUP_DIR)).filter(f => f.endsWith(".json")).map(async name => {
+      const stat = await fs.promises.stat(path.join(BACKUP_DIR, name));
+      return { name, size: stat.size, modified: stat.mtime.toISOString() };
+    }));
+  } catch { /* no backups yet */ }
+  files.sort((a, b) => b.modified.localeCompare(a.modified));
+  const [active, trashed] = await Promise.all([Entry.countDocuments({ deletedAt: null }), Entry.countDocuments({ deletedAt: { $ne: null } })]);
+  res.json({ directory: BACKUP_DIR, lastBackup, files: files.slice(0, 8), fileCount: files.length, activeEntries: active, trashedEntries: trashed });
+}));
+
+app.post("/api/backup/run", asyncRoute(async (req, res) => {
+  clearTimeout(backupTimer);
+  await writeBackup();
+  res.json({ ok: true, lastBackup });
+}));
+
+app.get("/api/backup.json", asyncRoute(async (req, res) => {
+  const backup = await collectBackup();
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="pass-tracker-backup-${todayStamp()}.json"`);
+  res.send(JSON.stringify(backup));
+}));
+
+// Restore only ever ADDS or UPDATES (newer copy wins); it never deletes anything that is already in the database.
+app.post("/api/backup/restore", express.json({ limit: "100mb" }), asyncRoute(async (req, res) => {
+  const body = req.body;
+  if (!body || body.app !== "navaratri-pass-tracker" || !body.data || !Array.isArray(body.data.entries)) {
+    throw bad("That file isn't a Pass Tracker backup.", "backupFile");
+  }
+  const oid = (v) => mongoose.isValidObjectId(v) ? new mongoose.Types.ObjectId(String(v)) : null;
+  const when = (v) => { const d = v ? new Date(v) : null; return d && !Number.isNaN(d.getTime()) ? d : null; };
+  const result = { entriesAdded: 0, entriesUpdated: 0, entriesSkipped: 0, salespeopleAdded: 0, inventoriesAdded: 0 };
+
+  for (const p of body.data.salespeople || []) {
+    const name = String(p?.name || "").trim();
+    if (!name || name.length > 120) continue;
+    if (!(await Salesperson.findOne({ nameKey: nameKey(name) }))) {
+      await Salesperson.create({ ...(oid(p._id) ? { _id: oid(p._id) } : {}), name, nameKey: nameKey(name), active: p.active !== false }).catch(() => {});
+      result.salespeopleAdded++;
+    }
+  }
+  for (const inv of body.data.inventories || []) {
+    if (!validDate(inv?.date)) continue;
+    const limit = inv.limitOverride ?? null;
+    if (limit !== null && !(Number.isInteger(limit) && limit >= 0)) continue;
+    if (!(await Inventory.findOne({ date: inv.date }))) {
+      await Inventory.create({ date: inv.date, limitOverride: limit, notes: String(inv.notes || "") }).catch(() => {});
+      result.inventoriesAdded++;
+    }
+  }
+  for (const item of body.data.entries) {
+    const id = oid(item?._id);
+    const quantity = Number(item?.quantity);
+    if (!id || !validDate(item.date) || !String(item.partyName || "").trim() || !Number.isInteger(quantity) || quantity < 1 || !Number.isInteger(Number(item.srNo))) { result.entriesSkipped++; continue; }
+    const person = item.salesperson ? await findOrCreateSalesperson(String(item.salesperson)) : null;
+    const fields = {
+      date: item.date, partyName: String(item.partyName).trim().slice(0, 160), phone: String(item.phone || "").slice(0, 30),
+      salesperson: person?.name || "", salespersonId: person?._id || null, quantity,
+      status: ["Sent", "Pending"].includes(item.status) ? item.status : "Pending",
+      attendance: ["Present", "Absent", "Not Marked"].includes(item.attendance) ? item.attendance : "Not Marked",
+      remark: String(item.remark || "").slice(0, 1000), deletedAt: when(item.deletedAt),
+      createdAt: when(item.createdAt) || new Date()
+    };
+    try {
+      const existing = await Entry.findById(id);
+      if (!existing) {
+        let srNo = Number(item.srNo);
+        if (await Entry.exists({ date: fields.date, srNo })) {
+          const last = await Entry.findOne({ date: fields.date }).sort({ srNo: -1 }).select("srNo").lean();
+          srNo = (last?.srNo || 0) + 1;
+        }
+        await Entry.collection.insertOne({ _id: id, ...fields, srNo, createdAt: fields.createdAt, updatedAt: when(item.updatedAt) || new Date() });
+        result.entriesAdded++;
+      } else if ((when(item.updatedAt) || 0) > (existing.updatedAt || 0)) {
+        Object.assign(existing, fields, { createdAt: existing.createdAt });
+        await existing.save();
+        result.entriesUpdated++;
+      }
+    } catch (err) { result.entriesSkipped++; console.error("Restore skipped an entry:", err.message); }
+  }
+  for (const rev of body.data.revisions || []) {
+    const id = oid(rev?._id);
+    if (id && ["create", "update", "delete", "restore"].includes(rev.action) && !(await Revision.exists({ _id: id }))) {
+      await Revision.collection.insertOne({ _id: id, entryId: oid(rev.entryId), action: rev.action, snapshot: rev.snapshot, at: when(rev.at) || new Date() }).catch(() => {});
+    }
+  }
+  res.json(result);
+}));
 
 app.get("/api/health", (req, res) => res.json({ ok: true, database: mongoose.connection.readyState === 1 ? "connected" : "disconnected" }));
 
@@ -205,7 +518,7 @@ app.put("/api/settings", asyncRoute(async (req, res) => {
   // The new default applies to every date that has no custom limit, so it can't drop below what those dates already allocated.
   const customDates = (await Inventory.find({ limitOverride: { $ne: null } }).select("date").lean()).map(i => i.date);
   const busiest = await Entry.aggregate([
-    { $match: { date: { $nin: customDates } } },
+    { $match: { date: { $nin: customDates }, deletedAt: null } },
     { $group: { _id: "$date", allocated: { $sum: "$quantity" } } },
     { $sort: { allocated: -1 } }, { $limit: 1 }
   ]);
@@ -264,6 +577,19 @@ app.delete("/api/salespersons/:id", asyncRoute(async (req, res) => {
   res.json({ salespersons: payload.salespersons, salespersonDetails: payload.salespersonDetails });
 }));
 
+app.get("/api/salespersons/template.xlsx", asyncRoute(async (req, res) => {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Salespeople");
+  sheet.columns = [{ header: "Salesperson", key: "name", width: 32 }];
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFA3153A" } };
+  ["Example Name One", "Example Name Two"].forEach(name => sheet.addRow({ name }));
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="salesperson-template.xlsx"');
+  await workbook.xlsx.write(res);
+  res.end();
+}));
+
 app.post("/api/salespersons/import", express.raw({
   type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   limit: "5mb"
@@ -297,7 +623,10 @@ app.post("/api/salespersons/import", express.raw({
   }
   const imported = (await Salesperson.countDocuments()) - before;
   const payload = await settingsPayload();
-  res.json({ salespersons: payload.salespersons, salespersonDetails: payload.salespersonDetails, imported });
+  res.json({
+    salespersons: payload.salespersons, salespersonDetails: payload.salespersonDetails,
+    imported, skipped: unique.length - imported, found: unique.length, duplicatesInFile: names.length - unique.length
+  });
 }));
 
 app.get("/api/inventory/:date", asyncRoute(async (req, res) => {
@@ -324,8 +653,8 @@ app.put("/api/inventory/:date", asyncRoute(async (req, res) => {
 }));
 
 app.get("/api/entries", asyncRoute(async (req, res) => {
-  const { date, from, to, status, attendance, q, recent } = req.query;
-  const filter = {};
+  const { date, from, to, status, attendance, q, recent, trash } = req.query;
+  const filter = trash === "true" ? { deletedAt: { $ne: null } } : { deletedAt: null };
   if (recent !== "true" && date) {
     if (!validDate(date)) throw bad("Invalid date.", "date");
     filter.date = date;
@@ -341,7 +670,7 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
     filter.$or = [{ partyName: new RegExp(safe, "i") }, { phone: new RegExp(safe, "i") }, { salesperson: new RegExp(safe, "i") }, { remark: new RegExp(safe, "i") }];
   }
   const entries = await Entry.find(filter)
-    .sort(recent === "true" ? { createdAt: -1, _id: -1 } : { date: -1, srNo: 1 })
+    .sort(trash === "true" ? { deletedAt: -1 } : recent === "true" ? { createdAt: -1, _id: -1 } : { date: -1, srNo: 1 })
     .limit(recent === "true" ? 100 : 10000)
     .lean();
   res.json(entries);
@@ -349,7 +678,7 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
 
 app.get("/api/entries/:id", asyncRoute(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid entry ID.", { code: "BAD_ID" });
-  const entry = await Entry.findById(req.params.id).lean();
+  const entry = await Entry.findOne({ _id: req.params.id }).lean();
   if (!entry) throw new HttpError(404, "Entry not found. It may have been deleted.", { code: "NOT_FOUND" });
   res.json(entry);
 }));
@@ -388,12 +717,13 @@ app.post("/api/entries", asyncRoute(async (req, res) => {
       if (e.code !== 11000 || attempt === 4) throw e;
     }
   }
+  await logRevision(entry, "create");
   res.status(201).json(entry);
 }));
 
 app.put("/api/entries/:id", asyncRoute(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid entry ID.", { code: "BAD_ID" });
-  const old = await Entry.findById(req.params.id);
+  const old = await Entry.findOne({ _id: req.params.id, deletedAt: null });
   if (!old) throw new HttpError(404, "Entry not found. It may have been deleted.", { code: "NOT_FOUND" });
   const body = req.body || {};
   const date = body.date || old.date;
@@ -423,6 +753,7 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
     const last = await Entry.findOne({ date }).sort({ srNo: -1 }).select("srNo").lean();
     old.srNo = (last?.srNo || 0) + 1;
   }
+  await logRevision(old, "update");       // keep the version being replaced
   Object.assign(old, { date, partyName, phone, ...(await resolveSalesperson(salesperson)), quantity, status, attendance, remark });
   await old.save();
   res.json(old);
@@ -430,14 +761,29 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
 
 app.delete("/api/entries/:id", asyncRoute(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid entry ID.", { code: "BAD_ID" });
-  const deleted = await Entry.findByIdAndDelete(req.params.id);
-  if (!deleted) throw new HttpError(404, "Entry not found. It may have been deleted.", { code: "NOT_FOUND" });
+  const entry = await Entry.findOneAndUpdate({ _id: req.params.id, deletedAt: null }, { $set: { deletedAt: new Date() } }, { new: true });
+  if (!entry) throw new HttpError(404, "Entry not found. It may have been deleted.", { code: "NOT_FOUND" });
+  await logRevision(entry, "delete");
   res.json({ ok: true });
+}));
+
+app.post("/api/entries/:id/restore", asyncRoute(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, "Invalid entry ID.", { code: "BAD_ID" });
+  const entry = await Entry.findOne({ _id: req.params.id, deletedAt: { $ne: null } });
+  if (!entry) throw new HttpError(404, "That entry isn't in the Trash.", { code: "NOT_FOUND" });
+  const summary = await inventorySummary(entry.date);
+  if (summary.available < entry.quantity) {
+    throw bad(`Can't restore: only ${Math.max(0, summary.available)} pass(es) are free on ${entry.date}, but this entry has ${entry.quantity}. Raise that date's limit first.`, "quantity");
+  }
+  entry.deletedAt = null;
+  await entry.save();
+  await logRevision(entry, "restore");
+  res.json(entry);
 }));
 
 app.get("/api/reports.xlsx", asyncRoute(async (req, res) => {
   const { date, from, to } = req.query;
-  const filter = {};
+  const filter = { deletedAt: null };
   if (date) {
     if (!validDate(date)) throw bad("Invalid report date.", "date");
     filter.date = date;
@@ -566,15 +912,18 @@ async function start() {
     console.error("Missing MONGODB_URI. Copy .env.example to .env and configure MongoDB.");
     process.exit(1);
   }
-  await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000 });
+  await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000, writeConcern: { w: "majority", journal: true } });
   console.log("MongoDB connected.");
   await migrate();
+  await ensureDefaultUser();
+  writeBackup().catch(err => console.error("Startup backup failed:", err.message));
+  setInterval(() => writeBackup().catch(() => {}), 6 * 3600 * 1000).unref();
   const server = app.listen(PORT, () => console.log(`Navaratri Pass Tracker running at http://localhost:${PORT}`));
   server.on("error", (err) => {
     console.error(err.code === "EADDRINUSE" ? `Port ${PORT} is already in use. Change PORT in .env or stop the other process.` : `Server error: ${err.message}`);
     process.exit(1);
   });
-  const shutdown = () => server.close(() => mongoose.connection.close().finally(() => process.exit(0)));
+  const shutdown = () => server.close(async () => { try { clearTimeout(backupTimer); await writeBackup(); } catch {} mongoose.connection.close().finally(() => process.exit(0)); });
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }

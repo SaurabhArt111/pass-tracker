@@ -118,12 +118,76 @@
         <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" />
         <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
       </symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24">
+        <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linejoin="round" />
+        <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8" />
+      </symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24">
+        <path
+          d="M3 3l18 18M10.6 5.7A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-3.2 3.9M6.6 6.9A16 16 0 0 0 2.5 12S6 18.5 12 18.5a9 9 0 0 0 4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"
+          fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="i-logout" viewBox="0 0 24 24">
+        <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 8l-4 4 4 4M6 12h10" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M12 3 5 6v5.5c0 4.4 2.9 7.6 7 9.5 4.1-1.9 7-5.1 7-9.5V6z" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linejoin="round" />
+        <path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24">
+        <path d="M12 16V5m0 0L8 9m4-4 4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="i-file" viewBox="0 0 24 24">
+        <path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z M14 3v5h5" fill="none"
+          stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="i-restore" viewBox="0 0 24 24">
+        <path d="M4 12a8 8 0 1 0 2.6-5.900M4 4v5h5M12 8v4l3 2" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
       <symbol id="i-diya" viewBox="0 0 32 32">
         <path d="M16 3c2.6 3 4 5.2 4 7.6A4 4 0 0 1 16 14.5a4 4 0 0 1-4-3.9C12 8.2 13.4 6 16 3z" fill="currentColor" />
         <path d="M4 18h24c0 5.2-4.7 9-12 9S4 23.2 4 18z" fill="currentColor" />
       </symbol>
     </defs>
   </svg>
+
+  <!-- Sign-in -->
+  <div class="login-screen" id="loginScreen" hidden>
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="brand-mark"><svg class="icon">
+            <use href="#i-diya" />
+          </svg></span>
+        <div><strong>Navaratri</strong><small>Pass tracker</small></div>
+      </div>
+      <h1>Sign in</h1>
+      <p class="login-sub">Enter your ID and password to open the tracker.</p>
+      <form id="loginForm" novalidate>
+        <div class="form-alert" id="loginAlert" role="alert" hidden></div>
+        <div class="field"><label for="loginId">ID</label>
+          <input type="text" id="loginId" autocomplete="username" autocapitalize="off" autocorrect="off"
+            spellcheck="false" required>
+        </div>
+        <div class="field"><label for="loginPassword">Password</label>
+          <div class="password-wrap">
+            <input type="password" id="loginPassword" autocomplete="current-password" required>
+            <button type="button" class="pw-toggle" data-pw-toggle="loginPassword" aria-label="Show password"><svg
+                class="icon">
+                <use href="#i-eye" />
+              </svg></button>
+          </div>
+        </div>
+        <button class="button button-primary full-button" type="submit" id="loginSubmit">Sign in</button>
+      </form>
+      <p class="login-foot">Private workspace · your entries stay on this computer.</p>
+    </div>
+  </div>
 
   <div class="offline-banner" id="offlineBanner" role="status" hidden>
     <svg class="icon">
@@ -178,9 +242,21 @@
               <use href="#i-system" id="themeToggleIcon" />
             </svg>
           </button>
-          <div class="avatar" aria-hidden="true">A</div>
+          <button class="icon-button" id="logoutTop" type="button" aria-label="Sign out" title="Sign out"><svg
+              class="icon">
+              <use href="#i-logout" />
+            </svg></button>
+          <div class="avatar" id="avatar" aria-hidden="true">A</div>
         </div>
       </header>
+
+      <div class="notice-bar" id="defaultPwBanner" hidden>
+        <svg class="icon">
+          <use href="#i-alert" />
+        </svg>
+        <span>You're still using the default password. Please change it.</span>
+        <button class="button button-secondary button-small" type="button" data-goto="settings">Change password</button>
+      </div>
 
       <section class="page active" id="page-dashboard">
         <div class="page-heading">
@@ -317,6 +393,10 @@
                 class="icon">
                 <use href="#i-clock" />
               </svg>Recent</button>
+            <button class="button button-secondary" id="trashButton" type="button" aria-pressed="false"><svg
+                class="icon">
+                <use href="#i-trash" />
+              </svg>Trash</button>
             <button class="button button-primary" id="newEntryButton" data-new-entry><svg class="icon">
                 <use href="#i-plus" />
               </svg>New entry</button>
@@ -499,21 +579,134 @@
               <p>Import names from an Excel file or add them while creating an entry.</p>
             </div>
           </div>
-          <form id="salespersonImportForm">
-            <div class="form-alert" id="salespersonImportAlert" role="alert" hidden></div>
-            <div class="salesperson-import">
-              <div class="field">
-                <label for="salespersonsFile">Salesperson Excel file (.xlsx)</label>
-                <input type="file" id="salespersonsFile"
-                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
-                <small>Use a first-row header named “Salesperson” and list names below it. Imported names are added to
-                  the existing list.</small>
-              </div>
-              <button class="button button-secondary" type="submit" id="importSalespersons">Import names</button>
+          <div class="salesperson-add">
+            <div class="field"><label for="newPerson">Add one salesperson</label>
+              <div class="salesperson-entry"><input type="text" id="newPerson" maxlength="120" placeholder="Full name"
+                  autocomplete="off"><button type="button" class="button button-secondary"
+                  id="addPersonSettings">Add</button></div>
+              <small class="field-error" id="err-newPerson"></small>
             </div>
+          </div>
+          <form id="salespersonImportForm" novalidate>
+            <div class="form-alert" id="salespersonImportAlert" role="alert" hidden></div>
+            <div class="import-head"><strong>Import from Excel</strong>
+              <a class="text-link" href="/api/salespersons/template.xlsx" download><svg class="icon">
+                  <use href="#i-download" />
+                </svg>Download template</a>
+            </div>
+            <div class="dropzone" id="dropzone" tabindex="0" role="button"
+              aria-label="Choose or drop an Excel .xlsx file">
+              <input type="file" id="salespersonsFile" class="sr-only" tabindex="-1"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+              <div class="dz-empty" id="dzEmpty">
+                <span class="dz-icon"><svg class="icon">
+                    <use href="#i-upload" />
+                  </svg></span>
+                <strong>Drop your Excel file here</strong>
+                <span>or click to browse · .xlsx, up to 5 MB</span>
+              </div>
+              <div class="dz-file" id="dzFile" hidden>
+                <span class="dz-icon"><svg class="icon">
+                    <use href="#i-file" />
+                  </svg></span>
+                <div class="dz-file-info"><strong id="dzName">—</strong><span id="dzSize"></span></div>
+                <button type="button" class="mini-action" id="dzRemove" aria-label="Remove file"
+                  title="Remove file"><svg class="icon">
+                    <use href="#i-close" />
+                  </svg></button>
+              </div>
+            </div>
+            <ol class="import-steps">
+              <li>Put the names in a column whose first-row heading is <b>Salesperson</b>.</li>
+              <li>Drop the file above. Names already in the list are skipped, so it's safe to import again.</li>
+            </ol>
+            <div class="import-actions"><button class="button button-primary" type="submit" id="importSalespersons"
+                disabled>Import names</button></div>
+            <div class="import-result" id="importResult" role="status" hidden></div>
             <p class="form-hint" id="salespersonCount" aria-live="polite"></p>
           </form>
           <div class="people-list" id="peopleList" aria-label="Salesperson list"></div>
+        </article>
+        <article class="panel settings-panel">
+          <div class="settings-section-head">
+            <div class="settings-icon"><svg class="icon">
+                <use href="#i-shield" />
+              </svg></div>
+            <div>
+              <h2>Account</h2>
+              <p>Signed in as <b id="accountName">—</b>. Changing the password signs out other devices.</p>
+            </div>
+          </div>
+          <form id="passwordForm" novalidate>
+            <div class="form-alert" id="passwordAlert" role="alert" hidden></div>
+            <div class="settings-fields settings-fields-3">
+              <div class="field"><label for="pwCurrent">Current password</label>
+                <div class="password-wrap"><input type="password" id="pwCurrent" autocomplete="current-password"><button
+                    type="button" class="pw-toggle" data-pw-toggle="pwCurrent" aria-label="Show password"><svg
+                      class="icon">
+                      <use href="#i-eye" />
+                    </svg></button></div>
+                <small class="field-error" id="err-pwCurrent"></small>
+              </div>
+              <div class="field"><label for="pwNew">New password</label>
+                <div class="password-wrap"><input type="password" id="pwNew" autocomplete="new-password"><button
+                    type="button" class="pw-toggle" data-pw-toggle="pwNew" aria-label="Show password"><svg class="icon">
+                      <use href="#i-eye" />
+                    </svg></button></div>
+                <small id="hint-pwNew">At least 8 characters.</small>
+                <small class="field-error" id="err-pwNew"></small>
+              </div>
+              <div class="field"><label for="pwConfirm">Confirm new password</label>
+                <div class="password-wrap"><input type="password" id="pwConfirm" autocomplete="new-password"><button
+                    type="button" class="pw-toggle" data-pw-toggle="pwConfirm" aria-label="Show password"><svg
+                      class="icon">
+                      <use href="#i-eye" />
+                    </svg></button></div>
+                <small class="field-error" id="err-pwConfirm"></small>
+              </div>
+            </div>
+            <div class="settings-actions"><span class="form-hint">Forgot it? Run <code>npm run reset-password</code> on
+                this computer.</span>
+              <div class="button-row"><button class="button button-secondary" type="button" id="logoutButton"><svg
+                    class="icon">
+                    <use href="#i-logout" />
+                  </svg>Sign out</button>
+                <button class="button button-primary" type="submit" id="savePassword">Change password</button>
+              </div>
+            </div>
+          </form>
+        </article>
+        <article class="panel settings-panel">
+          <div class="settings-section-head">
+            <div class="settings-icon"><svg class="icon">
+                <use href="#i-restore" />
+              </svg></div>
+            <div>
+              <h2>Data safety</h2>
+              <p>Your entries are protected in four ways, so nothing gets lost.</p>
+            </div>
+          </div>
+          <ul class="rules-list">
+            <li><b>Trash:</b> deleting an entry only hides it. Open <b>Pass entries → Trash</b> to restore it.</li>
+            <li><b>History:</b> every edit keeps the earlier version of the entry in the database.</li>
+            <li><b>Automatic backups:</b> a backup file is written to the <code>backups</code> folder after every
+              change, and daily copies are kept for 30 days.</li>
+            <li><b>Restore never deletes:</b> restoring a backup only adds or updates entries.</li>
+          </ul>
+          <div class="backup-status" id="backupStatus" aria-live="polite">Checking backups…</div>
+          <div class="form-alert" id="backupAlert" role="alert" hidden></div>
+          <div class="button-row backup-actions">
+            <a class="button button-secondary" href="/api/backup.json" download><svg class="icon">
+                <use href="#i-download" />
+              </svg>Download backup</a>
+            <button class="button button-secondary" type="button" id="backupNow"><svg class="icon">
+                <use href="#i-refresh" />
+              </svg>Back up now</button>
+            <button class="button button-secondary" type="button" id="restoreButton"><svg class="icon">
+                <use href="#i-upload" />
+              </svg>Restore from file</button>
+            <input type="file" id="restoreFile" class="sr-only" tabindex="-1" accept=".json,application/json">
+          </div>
         </article>
         <article class="panel settings-panel">
           <div class="settings-section-head">
@@ -532,7 +725,8 @@
             <li>Every date follows the default daily limit unless you set a custom limit for that date on the dashboard.
             </li>
             <li>Entry creation time is stored automatically; event date can be selected separately.</li>
-            <li>Deleting an entry releases its allocated quantity back to that day's inventory.</li>
+            <li>Deleting an entry (moving it to Trash) releases its passes back to that day; restoring it takes them
+              again.</li>
           </ul>
         </article>
       </section>
@@ -649,10 +843,11 @@
           <use href="#i-trash" />
         </svg></div>
       <h2 id="confirmTitle">Delete this entry?</h2>
-      <p id="confirmText">This record will be permanently removed and its passes returned to inventory.</p>
+      <p id="confirmText">This record will be moved to Trash and its passes returned to inventory. You can restore it
+        later.</p>
       <div class="form-alert" id="confirmAlert" role="alert" hidden></div>
       <div class="button-row"><button class="button button-secondary" id="confirmCancel" type="button">Keep
-          entry</button><button class="button button-danger" id="confirmDelete" type="button">Delete entry</button>
+          entry</button><button class="button button-danger" id="confirmDelete" type="button">Move to Trash</button>
       </div>
     </div>
   </div>

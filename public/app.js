@@ -13,7 +13,11 @@ const state = {
   entryRouteId: null,
   deleteId: null,
   formAvailable: null,     // passes available for the date chosen in the form
-  formDirty: false
+  formDirty: false,
+  authed: false,
+  auth: null,
+  trashView: false,
+  importFile: null
 };
 
 /* ---------- Helpers ---------- */
@@ -95,7 +99,11 @@ async function api(url, options = {}, { timeout = 15000, raw = false } = {}) {
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) throw await errorFromResponse(response);
+  if (!response.ok) {
+    const err = await errorFromResponse(response);
+    if (err.code === "UNAUTHENTICATED" && state.authed) showLogin("Your session ended. Please sign in again.");
+    throw err;
+  }
   if (raw) return response;
   const type = response.headers.get("content-type") || "";
   if (!type.includes("application/json")) return response;
@@ -130,6 +138,7 @@ function toast(message, kind = "success", action = null) {
 
 let lastReported = { text: "", at: 0 };
 function reportError(err, fallback = "Something went wrong. Try again.") {
+  if (err && err.code === "UNAUTHENTICATED") return;      // the sign-in screen already explains this
   console.error(err);
   const text = (err && err.message) || fallback;
   const now = Date.now();
@@ -155,7 +164,7 @@ window.addEventListener("offline", syncOnline);
 window.addEventListener("online", () => {
   syncOnline();
   toast("Back online.");
-  refreshCurrentPage();
+  if (state.authed) refreshCurrentPage();
 });
 
 /* ---------- Table states ---------- */
@@ -269,6 +278,7 @@ function routeParts() {
   return location.hash.slice(1).split("/").filter(Boolean);
 }
 function handleLocationChange() {
+  if (!state.authed) return;
   const [page, routeId] = routeParts();
   if (page === "entries" && routeId) {
     setPage("entries", { updateHash: false });
@@ -279,6 +289,7 @@ function handleLocationChange() {
   setPage(page || "dashboard", { updateHash: false });
 }
 function refreshCurrentPage() {
+  if (!state.authed) return;
   if (state.page === "dashboard") loadDashboard();
   if (state.page === "entries") loadEntries();
   if (state.page === "settings") loadSettings();
@@ -404,7 +415,8 @@ let entriesReq = 0;
 async function loadEntries() {
   const date = $("entriesDate").value;
   const params = new URLSearchParams();
-  if (state.recentEntries) params.set("recent", "true");
+  if (state.trashView) params.set("trash", "true");
+  else if (state.recentEntries) params.set("recent", "true");
   else if (date) params.set("date", date);
   if ($("entriesStatus").value) params.set("status", $("entriesStatus").value);
   if ($("entriesAttendance").value) params.set("attendance", $("entriesAttendance").value);
@@ -416,12 +428,14 @@ async function loadEntries() {
   try {
     const [entries, summary] = await Promise.all([
       api(`/api/entries?${params.toString()}`),
-      state.recentEntries ? Promise.resolve(null) : api(`/api/inventory/${summaryDate}`)
+      (state.recentEntries || state.trashView) ? Promise.resolve(null) : api(`/api/inventory/${summaryDate}`)
     ]);
     if (my !== entriesReq) return;
     cacheEntries(entries);
     $("entryCountLabel").textContent = `${entries.length} record${entries.length === 1 ? "" : "s"}`;
-    $("entryInventorySummary").innerHTML = state.recentEntries
+    $("entryInventorySummary").innerHTML = state.trashView
+      ? `<span class="summary-chip">Trash <strong>${entries.length} deleted entr${entries.length === 1 ? "y" : "ies"}</strong></span><span class="summary-chip">Restore brings the passes back to that date</span>`
+      : state.recentEntries
       ? `<span class="summary-chip">Recent entries <strong>Latest ${entries.length}${entries.length === 100 ? "+" : ""}</strong></span><span class="summary-chip">Sorted by newest added</span>`
       : `<span class="summary-chip">Event date <strong>${prettyDate(summaryDate)}</strong></span>` +
         `<span class="summary-chip">Daily limit <strong>${num(summary.limit)}</strong></span>` +
@@ -429,7 +443,19 @@ async function loadEntries() {
         `<span class="summary-chip">Available <strong>${num(summary.available)}</strong></span>`;
     if (!entries.length) {
       const filtered = params.toString() !== "";
-      return setTableState(rows, 8, "empty", state.recentEntries ? "No pass entries have been added yet." : filtered ? "No entries match these filters." : "No entries yet. Tap + to add the first one.");
+      return setTableState(rows, 8, "empty", state.trashView ? "The Trash is empty." : state.recentEntries ? "No pass entries have been added yet." : filtered ? "No entries match these filters." : "No entries yet. Tap + to add the first one.");
+    }
+    if (state.trashView) {
+      rows.innerHTML = entries.map(e => `<tr class="trash-row" data-id="${esc(e._id)}">
+      <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
+      <td class="c-time"><span class="when">${esc(prettyDate(e.date))}</span><div class="sub-date">Deleted ${esc(prettyDateTime(e.deletedAt))}</div></td>
+      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong><small>${esc([e.phone, e.salesperson].filter(Boolean).join(" · ") || "No phone")}</small></div></td>
+      <td class="c-qty"><strong>${e.quantity}</strong><span class="qty-word"> pass${e.quantity === 1 ? "" : "es"}</span></td>
+      <td class="c-status">${statusPill(e.status)}</td>
+      <td class="c-att">${attendancePill(e.attendance)}</td>
+      <td class="c-remark${e.remark ? "" : " is-empty"}" title="${esc(e.remark)}">${esc(e.remark || "—")}</td>
+      <td class="c-actions"><div class="action-buttons"><button class="mini-action message" type="button" data-restore="${esc(e._id)}" title="Restore this entry" aria-label="Restore entry for ${esc(e.partyName)}">${icon("restore")}<span>Restore</span></button></div></td></tr>`).join("");
+      return;
     }
     rows.innerHTML = entries.map(e => `<tr ${rowAttrs(e)}${e.remark ? " data-has-remark=\"true\"" : ""}>
       <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
@@ -442,7 +468,7 @@ async function loadEntries() {
       <td class="c-actions"><div class="action-buttons">
         <button class="mini-action message" type="button" data-whatsapp="${esc(e._id)}" ${whatsappDraft(e) ? "" : "disabled"} title="${whatsappDraft(e) ? "Send message on WhatsApp" : "Add one valid phone number to send a message"}" aria-label="Send message to ${esc(e.partyName)} on WhatsApp">${icon("send")}<span>Message</span></button>
         <button class="mini-action" type="button" data-edit="${esc(e._id)}" title="Edit entry" aria-label="Edit entry ${srLabel(e.srNo)}">${icon("edit")}</button>
-        <button class="mini-action delete" type="button" data-delete="${esc(e._id)}" title="Delete entry" aria-label="Delete entry ${srLabel(e.srNo)}">${icon("trash")}</button>
+        <button class="mini-action delete" type="button" data-delete="${esc(e._id)}" title="Move to Trash" aria-label="Delete entry ${srLabel(e.srNo)}">${icon("trash")}</button>
       </div></td></tr>`).join("");
   } catch (err) {
     if (my !== entriesReq) return;
@@ -459,6 +485,7 @@ async function loadSettings() {
     $("eventName").value = state.settings.eventName || "Navaratri Pass Tracker";
     $("defaultLimit").value = state.settings.defaultDailyLimit ?? 80;
     renderSalespersonOptions();
+    loadBackupStatus();
   } catch (err) { reportError(err); }
 }
 
@@ -780,6 +807,17 @@ function openEntryById(id) {
   if (!entry) { toast("That entry isn't loaded. Refreshing the list.", "error"); refreshCurrentPage(); return; }
   openEntryForm(entry);
 }
+async function restoreEntry(id, button) {
+  button.disabled = true;
+  try {
+    await api(`/api/entries/${id}/restore`, { method: "POST" });
+    toast("Entry restored.");
+    await Promise.all([loadEntries(), loadDashboard()]);
+  } catch (err) {
+    button.disabled = false;
+    reportError(err);
+  }
+}
 function handleRowActivate(event, container) {
   const whatsapp = event.target.closest("[data-whatsapp]");
   if (whatsapp) {
@@ -787,6 +825,8 @@ function handleRowActivate(event, container) {
     if (entry) openWhatsAppForEntry(entry);
     return;
   }
+  const restore = event.target.closest("[data-restore]");
+  if (restore) { restoreEntry(restore.dataset.restore, restore); return; }
   const del = event.target.closest("[data-delete]");
   if (del) { askDelete(del.dataset.delete); return; }
   const retry = event.target.closest("[data-retry]");
@@ -812,8 +852,8 @@ function askDelete(id) {
   hideAlert($("confirmAlert"));
   $("confirmTitle").textContent = entry ? `Delete ${entry.partyName}'s entry?` : "Delete this entry?";
   $("confirmText").textContent = entry
-    ? `Entry ${srLabel(entry.srNo)} (${entry.quantity} pass${entry.quantity === 1 ? "" : "es"}) will be permanently removed and its passes returned to inventory.`
-    : "This record will be permanently removed and its passes returned to inventory.";
+    ? `Entry ${srLabel(entry.srNo)} (${entry.quantity} pass${entry.quantity === 1 ? "" : "es"}) will be moved to Trash and its passes returned to inventory. You can restore it later.`
+    : "This record will be moved to Trash and its passes returned to inventory. You can restore it later.";
   openModal($("confirmBackdrop"), { focus: $("confirmCancel") });
 }
 function closeConfirm() { closeModal($("confirmBackdrop")); state.deleteId = null; }
@@ -825,22 +865,22 @@ $("deleteFromForm").addEventListener("click", () => { if (state.editId) askDelet
 $("confirmDelete").addEventListener("click", async () => {
   if (!state.deleteId || $("confirmDelete").disabled) return;
   const id = state.deleteId;
-  setBusy($("confirmDelete"), true, "Deleting…", "Delete entry");
+  setBusy($("confirmDelete"), true, "Deleting…", "Move to Trash");
   try {
     await api(`/api/entries/${id}`, { method: "DELETE" });
     state.byId.delete(id);
-    toast("Entry deleted. Passes returned to inventory.");
+    toast("Entry moved to Trash. Passes returned to inventory.");
   } catch (err) {
     if (err.status !== 404) {                                         // 404 = already gone, treat as success
       console.error(err);
       showAlert($("confirmAlert"), err.message);
-      setBusy($("confirmDelete"), false, "", "Delete entry");
+      setBusy($("confirmDelete"), false, "", "Move to Trash");
       return;
     }
     state.byId.delete(id);
     toast("That entry was already deleted.");
   }
-  setBusy($("confirmDelete"), false, "", "Delete entry");
+  setBusy($("confirmDelete"), false, "", "Move to Trash");
   closeConfirm();
   if (state.editId === id) closeEntryForm();
   await Promise.all([loadEntries(), loadDashboard()]);
@@ -876,14 +916,44 @@ $("settingsForm").addEventListener("submit", async (event) => {
   }
 });
 
+/* ---------- Salesperson import (drag & drop) ---------- */
+const fmtSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+function setImportFile(file) {
+  hideAlert($("salespersonImportAlert"));
+  $("importResult").hidden = true;
+  if (file) {
+    if (!/\.xlsx$/i.test(file.name)) { showAlert($("salespersonImportAlert"), "Please choose an Excel .xlsx file."); file = null; }
+    else if (file.size > 5 * 1048576) { showAlert($("salespersonImportAlert"), "That file is larger than 5 MB."); file = null; }
+    else if (file.size === 0) { showAlert($("salespersonImportAlert"), "That file is empty."); file = null; }
+  }
+  state.importFile = file;
+  if (!file) $("salespersonsFile").value = "";
+  $("dzEmpty").hidden = !!file;
+  $("dzFile").hidden = !file;
+  $("dropzone").classList.toggle("has-file", !!file);
+  if (file) { $("dzName").textContent = file.name; $("dzSize").textContent = fmtSize(file.size); }
+  $("importSalespersons").disabled = !file;
+}
+$("dropzone").addEventListener("click", (e) => {
+  if (e.target === $("salespersonsFile") || e.target.closest("#dzRemove")) return;
+  $("salespersonsFile").click();
+});
+$("dropzone").addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && e.target === $("dropzone")) { e.preventDefault(); $("salespersonsFile").click(); }
+});
+$("salespersonsFile").addEventListener("change", () => setImportFile($("salespersonsFile").files[0] || null));
+$("dzRemove").addEventListener("click", (e) => { e.stopPropagation(); setImportFile(null); $("dropzone").focus(); });
+["dragenter", "dragover"].forEach(type => $("dropzone").addEventListener(type, (e) => { e.preventDefault(); $("dropzone").classList.add("is-over"); }));
+["dragleave", "drop"].forEach(type => $("dropzone").addEventListener(type, (e) => { e.preventDefault(); $("dropzone").classList.remove("is-over"); }));
+$("dropzone").addEventListener("drop", (e) => setImportFile(e.dataTransfer?.files?.[0] || null));
+// A file dropped outside the zone would make the browser navigate away from the app.
+["dragover", "drop"].forEach(type => window.addEventListener(type, (e) => { if (!e.target.closest?.("#dropzone")) e.preventDefault(); }));
+
 $("salespersonImportForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   hideAlert($("salespersonImportAlert"));
-  const file = $("salespersonsFile").files[0];
-  if (!file) {
-    showAlert($("salespersonImportAlert"), "Choose an .xlsx workbook to import.");
-    return;
-  }
+  const file = state.importFile;
+  if (!file) { showAlert($("salespersonImportAlert"), "Choose an .xlsx workbook to import."); return; }
   setBusy($("importSalespersons"), true, "Importing…", "Import names");
   try {
     const result = await api("/api/salespersons/import", {
@@ -892,14 +962,157 @@ $("salespersonImportForm").addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
     });
     applyPeople(result);
-    $("salespersonsFile").value = "";
+    setImportFile(null);
+    const parts = [`<strong>${result.imported} new</strong> added`];
+    if (result.skipped) parts.push(`${result.skipped} already in the list`);
+    if (result.duplicatesInFile) parts.push(`${result.duplicatesInFile} repeated in the file`);
+    $("importResult").innerHTML = `${icon("check")}<span>${parts.join(" · ")}</span>`;
+    $("importResult").hidden = false;
     toast(`${result.imported} new salesperson${result.imported === 1 ? "" : "s"} imported.`);
   } catch (err) {
     console.error(err);
     showAlert($("salespersonImportAlert"), err.message);
   } finally {
     setBusy($("importSalespersons"), false, "", "Import names");
+    $("importSalespersons").disabled = !state.importFile;
   }
+});
+
+$("addPersonSettings").addEventListener("click", async () => {
+  const name = $("newPerson").value.trim();
+  if (!name) { setFieldError("newPerson", "Enter a name to add."); $("newPerson").focus(); return; }
+  setBusy($("addPersonSettings"), true, "Adding…", "Add");
+  try {
+    applyPeople(await api("/api/salespersons", { method: "POST", body: JSON.stringify({ name }) }));
+    $("newPerson").value = ""; setFieldError("newPerson", "");
+    toast("Salesperson added.");
+  } catch (err) {
+    setFieldError("newPerson", err.message);
+  } finally { setBusy($("addPersonSettings"), false, "", "Add"); }
+});
+$("newPerson").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("addPersonSettings").click(); } });
+$("newPerson").addEventListener("input", () => setFieldError("newPerson", ""));
+
+/* ==========================================================================
+   Account: sign in / out, change password
+   ========================================================================== */
+function showLogin(message = "") {
+  state.authed = false;
+  document.querySelectorAll(".modal-backdrop:not([hidden])").forEach(el => closeModal(el));
+  $("appShell").hidden = true;
+  $("loginScreen").hidden = false;
+  state.byId.clear();
+  [$("entryRows"), $("recentRows")].forEach(t => setTableState(t, 8, "loading"));
+  $("loginPassword").value = "";
+  if (message) showAlert($("loginAlert"), message); else hideAlert($("loginAlert"));
+  requestAnimationFrame(() => ($("loginId").value ? $("loginPassword") : $("loginId")).focus());
+}
+async function enterApp(auth) {
+  state.auth = auth;
+  state.authed = true;
+  $("loginScreen").hidden = true;
+  $("appShell").hidden = false;
+  $("accountName").textContent = auth.user.username;
+  $("avatar").textContent = auth.user.username.charAt(0).toUpperCase();
+  $("defaultPwBanner").hidden = !auth.usingDefaultPassword;
+  loadSettings();
+  handleLocationChange();
+}
+$("loginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if ($("loginSubmit").disabled) return;
+  hideAlert($("loginAlert"));
+  const username = $("loginId").value.trim(), password = $("loginPassword").value;
+  if (!username || !password) { showAlert($("loginAlert"), "Enter your ID and password."); return; }
+  setBusy($("loginSubmit"), true, "Signing in…", "Sign in");
+  try {
+    const auth = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    $("loginPassword").value = "";
+    await enterApp(auth);
+  } catch (err) {
+    showAlert($("loginAlert"), err.message);
+    $("loginPassword").select();
+  } finally { setBusy($("loginSubmit"), false, "", "Sign in"); }
+});
+async function logout() {
+  try { await api("/api/auth/logout", { method: "POST" }); } catch (err) { console.error(err); }
+  history.replaceState(null, "", location.pathname);
+  showLogin();
+}
+$("logoutTop").addEventListener("click", logout);
+$("logoutButton").addEventListener("click", logout);
+
+document.querySelectorAll("[data-pw-toggle]").forEach(btn => btn.addEventListener("click", () => {
+  const input = $(btn.dataset.pwToggle);
+  const show = input.type === "password";
+  input.type = show ? "text" : "password";
+  btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  btn.querySelector("use").setAttribute("href", show ? "#i-eye-off" : "#i-eye");
+}));
+
+const PW_FIELDS = ["pwCurrent", "pwNew", "pwConfirm"];
+$("passwordForm").addEventListener("input", (e) => { hideAlert($("passwordAlert")); if (PW_FIELDS.includes(e.target.id)) setFieldError(e.target.id, ""); });
+$("passwordForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if ($("savePassword").disabled) return;
+  hideAlert($("passwordAlert")); clearFieldErrors(PW_FIELDS);
+  const current = $("pwCurrent").value, next = $("pwNew").value, confirm = $("pwConfirm").value;
+  const errors = {};
+  if (!current) errors.pwCurrent = "Enter your current password.";
+  if (next.length < 8) errors.pwNew = "Use at least 8 characters.";
+  if (next !== confirm) errors.pwConfirm = "The two passwords don't match.";
+  const ids = Object.keys(errors);
+  if (ids.length) { ids.forEach(id => setFieldError(id, errors[id])); $(ids[0]).focus(); return; }
+  setBusy($("savePassword"), true, "Saving…", "Change password");
+  try {
+    await api("/api/auth/password", { method: "POST", body: JSON.stringify({ currentPassword: current, newPassword: next }) });
+    $("passwordForm").reset();
+    state.auth.usingDefaultPassword = false;
+    $("defaultPwBanner").hidden = true;
+    toast("Password changed. Other devices have been signed out.");
+  } catch (err) {
+    const id = { currentPassword: "pwCurrent", newPassword: "pwNew" }[err.field];
+    if (id) { setFieldError(id, err.message); $(id).focus(); } else showAlert($("passwordAlert"), err.message);
+  } finally { setBusy($("savePassword"), false, "", "Change password"); }
+});
+
+/* ==========================================================================
+   Data safety: backups
+   ========================================================================== */
+async function loadBackupStatus() {
+  try {
+    const s = await api("/api/backup/status");
+    const last = s.lastBackup?.at || s.files[0]?.modified;
+    $("backupStatus").innerHTML = `<div><strong>${num(s.activeEntries)}</strong> entries saved · <strong>${num(s.trashedEntries)}</strong> in Trash</div>` +
+      `<div>${last ? `Last automatic backup: <strong>${esc(prettyDateTime(last))}</strong>` : "No automatic backup yet. It is created after your next change."} · ${s.fileCount} file${s.fileCount === 1 ? "" : "s"} kept</div>` +
+      `<div class="backup-path">${esc(s.directory)}</div>`;
+  } catch (err) { $("backupStatus").textContent = "Couldn't read backup status."; }
+}
+$("backupNow").addEventListener("click", async () => {
+  const idle = $("backupNow").innerHTML;
+  setBusy($("backupNow"), true, "Backing up…", idle);
+  try { await api("/api/backup/run", { method: "POST" }, { timeout: 60000 }); toast("Backup saved to the backups folder."); loadBackupStatus(); }
+  catch (err) { reportError(err); }
+  finally { $("backupNow").disabled = false; $("backupNow").innerHTML = idle; }
+});
+$("restoreButton").addEventListener("click", () => $("restoreFile").click());
+$("restoreFile").addEventListener("change", async () => {
+  const file = $("restoreFile").files[0];
+  $("restoreFile").value = "";
+  hideAlert($("backupAlert"));
+  if (!file) return;
+  let text;
+  try { text = await file.text(); JSON.parse(text); }
+  catch { showAlert($("backupAlert"), "That file isn't a valid backup (.json)."); return; }
+  if (!window.confirm(`Restore from "${file.name}"?\n\nNothing in the database is deleted. Missing entries are added and older copies are updated.`)) return;
+  const idle = $("restoreButton").innerHTML;
+  setBusy($("restoreButton"), true, "Restoring…", idle);
+  try {
+    const r = await api("/api/backup/restore", { method: "POST", body: text }, { timeout: 180000 });
+    toast(`Restore finished: ${r.entriesAdded} added, ${r.entriesUpdated} updated${r.entriesSkipped ? `, ${r.entriesSkipped} skipped` : ""}.`);
+    loadBackupStatus(); loadSettings();
+  } catch (err) { showAlert($("backupAlert"), err.message); }
+  finally { $("restoreButton").disabled = false; $("restoreButton").innerHTML = idle; }
 });
 
 /* ==========================================================================
@@ -948,22 +1161,38 @@ document.querySelectorAll("[data-page]").forEach(btn => btn.addEventListener("cl
 document.querySelectorAll("[data-goto]").forEach(btn => btn.addEventListener("click", () => setPage(btn.dataset.goto)));
 
 $("dashboardDate").addEventListener("change", () => { state.dashboardDate = $("dashboardDate").value || todayISO(); loadDashboard(); });
-function leaveRecentEntries() {
-  if (!state.recentEntries) return;
-  state.recentEntries = false;
-  $("recentEntriesButton").setAttribute("aria-pressed", "false");
+function leaveRecentEntries(keepTrash = false) {
+  if (state.recentEntries) {
+    state.recentEntries = false;
+    $("recentEntriesButton").setAttribute("aria-pressed", "false");
+  }
+  if (state.trashView && !keepTrash) {
+    state.trashView = false;
+    $("trashButton").setAttribute("aria-pressed", "false");
+  }
 }
 ["entriesDate", "entriesStatus", "entriesAttendance"].forEach(id => $(id).addEventListener("change", () => {
-  leaveRecentEntries();
+  leaveRecentEntries(id !== "entriesDate");      // status / attendance filters also work inside Trash
   loadEntries();
 }));
 let searchTimer;
 $("entrySearch").addEventListener("input", () => {
-  leaveRecentEntries();
+  leaveRecentEntries(true);
   clearTimeout(searchTimer);
   searchTimer = setTimeout(loadEntries, 250);
 });
+$("trashButton").addEventListener("click", () => {
+  state.trashView = !state.trashView;
+  state.recentEntries = false;
+  $("recentEntriesButton").setAttribute("aria-pressed", "false");
+  $("trashButton").setAttribute("aria-pressed", String(state.trashView));
+  $("entriesDate").value = state.trashView ? "" : todayISO();
+  $("entriesStatus").value = ""; $("entriesAttendance").value = ""; $("entrySearch").value = "";
+  loadEntries();
+});
 $("recentEntriesButton").addEventListener("click", () => {
+  state.trashView = false;
+  $("trashButton").setAttribute("aria-pressed", "false");
   state.recentEntries = !state.recentEntries;
   $("recentEntriesButton").setAttribute("aria-pressed", String(state.recentEntries));
   if (state.recentEntries) {
@@ -985,6 +1214,12 @@ $("clearFilters").addEventListener("click", () => {
 ["dashboardDate", "entriesDate", "reportDate", "reportFrom", "reportTo"].forEach(id => { $(id).value = todayISO(); });
 $("todayLabel").textContent = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
 
-syncOnline();
-loadSettings();
-handleLocationChange();
+async function boot() {
+  syncOnline();
+  try {
+    await enterApp(await api("/api/auth/me"));
+  } catch (err) {
+    showLogin(err.code === "UNAUTHENTICATED" ? "" : err.message);
+  }
+}
+boot();

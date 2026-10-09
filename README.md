@@ -52,6 +52,21 @@ A private, single-event pass and ticket tracking app built with Node.js, Express
 
 For development with Node's watch mode, run `npm run dev`.
 
+## Sign-in
+
+- The app asks for an ID and password. Default login: ID **SSLAdmin**, password **SSLAdmin**. A banner reminds you to change it.
+- Change the password in **Settings -> Account** (min. 8 characters; other devices are signed out).
+- Passwords are stored as salted scrypt hashes; sessions last 14 days; 5 wrong attempts lock sign-in for 5 minutes.
+- Forgot the password? Run `npm run reset-password` on this computer. It resets the login to SSLAdmin / SSLAdmin and does not touch your entries.
+
+## Keeping entries safe
+
+- **Trash:** deleting only hides an entry. Use **Pass entries -> Trash -> Restore** to bring it back.
+- **History:** each edit/delete/restore stores the earlier version of the entry (`revisions` collection).
+- **Automatic backups:** after every change a JSON backup is written to `./backups` (`backup-latest.json`, `backup-previous.json`, and one file per day, kept 30 days). Set `BACKUP_DIR` / `BACKUP_KEEP_DAYS` in `.env` to change this.
+- **Manual:** Settings -> Data safety has Download backup, Back up now, and Restore from file. Restore only adds or updates; it never deletes.
+- Writes use MongoDB majority + journal write concern. Copy the `backups` folder somewhere else (USB / cloud drive) now and then, since it lives on the same computer as the database.
+
 ## How daily inventory works
 
 - Every date follows **Settings -> Default daily pass limit**. Changing the default updates all dates that have no custom limit, past and future.
@@ -66,7 +81,9 @@ For development with Node's watch mode, run `npm run dev`.
 | `settings` | One document: event name, default daily limit, schema version |
 | `inventories` | Only dates with a custom limit (`limitOverride`) or notes |
 | `salespeople` | Salesperson list (unique, case-insensitive name, active flag) |
-| `entries` | Pass entries; `salespersonId` links to a salesperson, `salesperson` keeps the name for lists/reports |
+| `users`, `sessions` | Login (hashed password) and active sign-ins |
+| `revisions` | Previous versions of entries |
+| `entries` | Pass entries (soft-deleted ones have `deletedAt`); `salespersonId` links to a salesperson, `salesperson` keeps the name for lists/reports |
 
 Renaming a salesperson in Settings updates their existing entries. Removing one keeps the name on old entries.
 
