@@ -13,6 +13,7 @@ A private, single-event pass and ticket tracking app built with Node.js, Express
 - Entry form: daily Sr. No., creation date/time, event date, party name, phone, salesperson, pass quantity, Sent/Pending status, Present/Absent/Not Marked attendance, remarks
 - WhatsApp message draft after saving a new entry or choosing **Send message** from its list row; the user reviews and sends it from WhatsApp
 - Create, edit and delete entries
+- Duplicate phone-number warnings when entering entries and duplicate labels in entry lists (number formatting is ignored; intentional duplicates can be confirmed)
 - Inventory validation: prevents over-allocation; deleting an entry returns passes to inventory
 - Search and filters for date, status, attendance, party, salesperson, phone and remarks
 - Recent entries view showing up to the 100 latest-added pass entries across event dates

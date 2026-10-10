@@ -1012,6 +1012,21 @@ tbody tr:last-child td {
   font-size: .9rem;
 }
 
+.party-cell .duplicate-number-flag,
+.duplicate-number-warning {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.duplicate-number-warning {
+  display: block;
+  margin-top: .35rem;
+}
+
+.duplicate-number-warning[hidden] {
+  display: none;
+}
+
 .sub-date {
   color: var(--muted);
   font-size: .88rem;

@@ -379,7 +379,7 @@ async function loadDashboard() {
     if (!recent.length) return setTableState(rows, 6, "empty", `No entries for ${prettyDate(date)} yet. Tap + to add the first one.`);
     rows.innerHTML = recent.map(e => `<tr ${rowAttrs(e)}>
       <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
-      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong>${e.salesperson ? `<small>Salesperson: ${esc(e.salesperson)}</small>` : ""}</div></td>
+      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong>${e.salesperson ? `<small>Salesperson: ${esc(e.salesperson)}</small>` : ""}${e.duplicatePhone ? `<small class="duplicate-number-flag">Duplicate phone number</small>` : ""}</div></td>
       <td class="c-phone">${esc(e.phone || "—")}</td>
       <td class="c-qty"><strong>${e.quantity}</strong></td>
       <td class="c-status">${statusPill(e.status)}</td>
@@ -460,7 +460,7 @@ async function loadEntries() {
     rows.innerHTML = entries.map(e => `<tr ${rowAttrs(e)}${e.remark ? " data-has-remark=\"true\"" : ""}>
       <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
       <td class="c-time"><span class="when">${esc(prettyDate(e.date))}</span><div class="sub-date">Added ${esc(prettyDateTime(e.createdAt))}</div></td>
-      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong><small>${esc([e.phone, e.salesperson].filter(Boolean).join(" · ") || "No phone")}</small></div></td>
+      <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong><small>${esc([e.phone, e.salesperson].filter(Boolean).join(" · ") || "No phone")}</small>${e.duplicatePhone ? `<small class="duplicate-number-flag">Duplicate phone number</small>` : ""}</div></td>
       <td class="c-qty"><strong>${e.quantity}</strong><span class="qty-word"> pass${e.quantity === 1 ? "" : "es"}</span></td>
       <td class="c-status">${statusPill(e.status)}</td>
       <td class="c-att">${attendancePill(e.attendance)}</td>
@@ -570,6 +570,38 @@ function setBusy(button, busy, busyText, idleHTML) {
 const ENTRY_FIELDS = ["entryDate", "partyName", "partyPhone", "salesperson", "quantity", "remark"];
 const SAVE_NEW = "Save entry", SAVE_EDIT = "Save changes";
 let availabilityReq = 0;
+let duplicatePhoneTimer;
+let duplicatePhoneReq = 0;
+
+function clearDuplicatePhoneWarning() {
+  duplicatePhoneReq++;
+  $("duplicatePhoneWarning").hidden = true;
+  $("duplicatePhoneWarning").textContent = "";
+}
+
+async function checkDuplicatePhone(phone = $("partyPhone").value.trim()) {
+  const digits = phone.replace(/\D/g, "");
+  const request = ++duplicatePhoneReq;
+  if (digits.length < 5) {
+    $("duplicatePhoneWarning").hidden = true;
+    $("duplicatePhoneWarning").textContent = "";
+    return [];
+  }
+  const params = new URLSearchParams({ phone });
+  if ($("editId").value) params.set("excludeId", $("editId").value);
+  const matches = await api(`/api/entries/duplicate-phone?${params.toString()}`);
+  const isCurrent = request === duplicatePhoneReq && phone === $("partyPhone").value.trim();
+  const warning = $("duplicatePhoneWarning");
+  if (isCurrent && matches.length) {
+    const names = matches.slice(0, 3).map(entry => `${entry.partyName} (${prettyDate(entry.date)})`).join(", ");
+    warning.textContent = `This number is already used by ${names}${matches.length > 3 ? ` and ${matches.length - 3} more` : ""}.`;
+    warning.hidden = false;
+  } else if (isCurrent) {
+    warning.textContent = "";
+    warning.hidden = true;
+  }
+  return matches;
+}
 
 function defaultEntryDate() {
   return (state.page === "entries" && $("entriesDate").value) || state.dashboardDate || todayISO();
@@ -579,6 +611,7 @@ function populateEntryForm(entry = null) {
   $("entryForm").reset();
   clearFieldErrors(ENTRY_FIELDS);
   hideAlert($("formAlert"));
+  clearDuplicatePhoneWarning();
   state.editId = entry?._id || null;
   state.formDirty = false;
   $("editId").value = entry?._id || "";
@@ -718,6 +751,18 @@ function applyFormErrors(errors) {
 $("entryForm").addEventListener("input", (event) => {
   state.formDirty = true;
   hideAlert($("formAlert"));
+  if (event.target.id === "partyPhone") {
+    clearTimeout(duplicatePhoneTimer);
+    clearDuplicatePhoneWarning();
+    if (event.target.value.replace(/\D/g, "").length >= 5) {
+      duplicatePhoneTimer = setTimeout(() => {
+        checkDuplicatePhone().catch(err => {
+          console.error(err);
+          toast(err.message, "error");
+        });
+      }, 350);
+    }
+  }
   if (event.target.id === "quantity") { setFieldError("quantity", ""); validateQuantityLive(); }
   else if (ENTRY_FIELDS.includes(event.target.id)) setFieldError(event.target.id, "");
 });
@@ -735,6 +780,13 @@ $("entryForm").addEventListener("submit", async (event) => {
   const idle = id ? SAVE_EDIT : SAVE_NEW;
   setBusy($("saveEntry"), true, "Saving…", idle);
   try {
+    const duplicateMatches = await checkDuplicatePhone(payload.phone);
+    if (duplicateMatches.length) {
+      const first = duplicateMatches[0];
+      const more = duplicateMatches.length > 1 ? ` and ${duplicateMatches.length - 1} more` : "";
+      const confirmed = window.confirm(`This phone number is already used by ${first.partyName}${more}. Do you want to save this entry anyway?`);
+      if (!confirmed) return;
+    }
     const savedEntry = await api(id ? `/api/entries/${id}` : "/api/entries", { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
     closeEntryForm();
     const draftUrl = !id && whatsappDraft(savedEntry);

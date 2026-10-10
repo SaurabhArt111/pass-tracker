@@ -35,7 +35,7 @@ app.use("/api", (req, res, next) => {
   next(new HttpError(503, "The database isn't connected. Make sure MongoDB is running, then try again.", { code: "DB_UNAVAILABLE" }));
 });
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // One document ("main") holding app-wide configuration.
 const settingsSchema = new mongoose.Schema({
@@ -67,6 +67,7 @@ const entrySchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   partyName: { type: String, required: true, trim: true, maxlength: 160 },
   phone: { type: String, default: "", trim: true, maxlength: 30 },
+  phoneKey: { type: String, default: "" },
   salesperson: { type: String, default: "", trim: true, maxlength: 120 },          // name snapshot (shown in lists / reports)
   salespersonId: { type: mongoose.Schema.Types.ObjectId, ref: "Salesperson", default: null, index: true },
   quantity: { type: Number, required: true, min: 1, default: 1 },
@@ -79,6 +80,7 @@ const entrySchema = new mongoose.Schema({
 
 entrySchema.index({ date: 1, srNo: 1 }, { unique: true });
 entrySchema.index({ createdAt: -1 });
+entrySchema.index({ phoneKey: 1, deletedAt: 1 });
 
 // Every create / edit / delete / restore keeps a copy of the entry as it was, so nothing is ever overwritten silently.
 const revisionSchema = new mongoose.Schema({
@@ -122,6 +124,7 @@ function checkPhone(phone) {
   if (phone.length > 30) throw bad("Phone number can be at most 30 characters.", "phone");
   if (!/^[0-9+()\-\s./,]+$/.test(phone) || digits < 5) throw bad("Enter a valid phone number, for example +91 98765 43210.", "phone");
 }
+function phoneKey(phone) { return String(phone || "").replace(/\D/g, ""); }
 function asyncRoute(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
@@ -220,6 +223,16 @@ async function migrate() {
   await Inventory.collection.updateMany({ limitOverride: { $exists: false } }, { $set: { limitOverride: null } });
   await Inventory.collection.updateMany({ limit: { $exists: true } }, { $unset: { limit: "" } });
   await Entry.collection.updateMany({ deletedAt: { $exists: false } }, { $set: { deletedAt: null } });
+  const cursor = Entry.collection.find({ phoneKey: { $exists: false } }, { projection: { phone: 1 } });
+  let updates = [];
+  for await (const entry of cursor) {
+    updates.push({ updateOne: { filter: { _id: entry._id }, update: { $set: { phoneKey: phoneKey(entry.phone) } } } });
+    if (updates.length === 500) {
+      await Entry.collection.bulkWrite(updates, { ordered: false });
+      updates = [];
+    }
+  }
+  if (updates.length) await Entry.collection.bulkWrite(updates, { ordered: false });
   await Settings.collection.updateOne({ key: "main" }, { $set: { schemaVersion: SCHEMA_VERSION }, $unset: { salespersons: "" } });
   if ((raw?.schemaVersion || 1) < SCHEMA_VERSION) console.log("Database upgraded to schema v" + SCHEMA_VERSION + ".");
   return settings;
@@ -471,6 +484,7 @@ app.post("/api/backup/restore", express.json({ limit: "100mb" }), asyncRoute(asy
     const person = item.salesperson ? await findOrCreateSalesperson(String(item.salesperson)) : null;
     const fields = {
       date: item.date, partyName: String(item.partyName).trim().slice(0, 160), phone: String(item.phone || "").slice(0, 30),
+      phoneKey: phoneKey(String(item.phone || "").slice(0, 30)),
       salesperson: person?.name || "", salespersonId: person?._id || null, quantity,
       status: ["Sent", "Pending"].includes(item.status) ? item.status : "Pending",
       attendance: ["Present", "Absent", "Not Marked"].includes(item.attendance) ? item.attendance : "Not Marked",
@@ -673,7 +687,27 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
     .sort(trash === "true" ? { deletedAt: -1 } : recent === "true" ? { createdAt: -1, _id: -1 } : { date: -1, srNo: 1 })
     .limit(recent === "true" ? 100 : 10000)
     .lean();
-  res.json(entries);
+  if (trash === "true") return res.json(entries);
+  const keys = [...new Set(entries.map(entry => entry.phoneKey).filter(key => key && key.length >= 5))];
+  const duplicates = keys.length ? await Entry.aggregate([
+    { $match: { phoneKey: { $in: keys }, deletedAt: null } },
+    { $group: { _id: "$phoneKey", count: { $sum: 1 } } },
+    { $match: { count: { $gt: 1 } } },
+    { $project: { _id: 1 } }
+  ]) : [];
+  const duplicateKeys = new Set(duplicates.map(item => item._id));
+  res.json(entries.map(entry => ({ ...entry, duplicatePhone: !!entry.phoneKey && duplicateKeys.has(entry.phoneKey) })));
+}));
+
+app.get("/api/entries/duplicate-phone", asyncRoute(async (req, res) => {
+  const phone = String(req.query.phone || "");
+  if (phone.length > 30) throw bad("Phone number can be at most 30 characters.", "phone");
+  const key = phoneKey(phone);
+  if (key.length < 5) return res.json([]);
+  const filter = { phoneKey: key, deletedAt: null };
+  if (mongoose.isValidObjectId(req.query.excludeId)) filter._id = { $ne: req.query.excludeId };
+  const matches = await Entry.find(filter).select("_id partyName date srNo phone").sort({ date: -1, srNo: 1 }).lean();
+  res.json(matches);
 }));
 
 app.get("/api/entries/:id", asyncRoute(async (req, res) => {
@@ -711,7 +745,7 @@ app.post("/api/entries", asyncRoute(async (req, res) => {
     const last = await Entry.findOne({ date: body.date }).sort({ srNo: -1 }).select("srNo").lean();
     try {
       entry = await Entry.create({
-        date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, ...(await resolveSalesperson(salesperson)), quantity, status, attendance, remark
+        date: body.date, srNo: (last?.srNo || 0) + 1, partyName, phone, phoneKey: phoneKey(phone), ...(await resolveSalesperson(salesperson)), quantity, status, attendance, remark
       });
     } catch (e) {
       if (e.code !== 11000 || attempt === 4) throw e;
@@ -754,7 +788,7 @@ app.put("/api/entries/:id", asyncRoute(async (req, res) => {
     old.srNo = (last?.srNo || 0) + 1;
   }
   await logRevision(old, "update");       // keep the version being replaced
-  Object.assign(old, { date, partyName, phone, ...(await resolveSalesperson(salesperson)), quantity, status, attendance, remark });
+  Object.assign(old, { date, partyName, phone, phoneKey: phoneKey(phone), ...(await resolveSalesperson(salesperson)), quantity, status, attendance, remark });
   await old.save();
   res.json(old);
 }));
