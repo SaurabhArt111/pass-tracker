@@ -35,7 +35,7 @@ app.use("/api", (req, res, next) => {
   next(new HttpError(503, "The database isn't connected. Make sure MongoDB is running, then try again.", { code: "DB_UNAVAILABLE" }));
 });
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 // One document ("main") holding app-wide configuration.
 const settingsSchema = new mongoose.Schema({
@@ -124,7 +124,12 @@ function checkPhone(phone) {
   if (phone.length > 30) throw bad("Phone number can be at most 30 characters.", "phone");
   if (!/^[0-9+()\-\s./,]+$/.test(phone) || digits < 5) throw bad("Enter a valid phone number, for example +91 98765 43210.", "phone");
 }
-function phoneKey(phone) { return String(phone || "").replace(/\D/g, ""); }
+function phoneKey(phone) {
+  let digits = String(phone || "").replace(/\D/g, "");
+  if (digits.startsWith("0091") && digits.length === 14) digits = digits.slice(4);
+  else if (digits.startsWith("91") && digits.length === 12) digits = digits.slice(2);
+  return digits;
+}
 function asyncRoute(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
@@ -223,16 +228,18 @@ async function migrate() {
   await Inventory.collection.updateMany({ limitOverride: { $exists: false } }, { $set: { limitOverride: null } });
   await Inventory.collection.updateMany({ limit: { $exists: true } }, { $unset: { limit: "" } });
   await Entry.collection.updateMany({ deletedAt: { $exists: false } }, { $set: { deletedAt: null } });
-  const cursor = Entry.collection.find({ phoneKey: { $exists: false } }, { projection: { phone: 1 } });
-  let updates = [];
-  for await (const entry of cursor) {
-    updates.push({ updateOne: { filter: { _id: entry._id }, update: { $set: { phoneKey: phoneKey(entry.phone) } } } });
-    if (updates.length === 500) {
-      await Entry.collection.bulkWrite(updates, { ordered: false });
-      updates = [];
+  if ((raw?.schemaVersion || 1) < SCHEMA_VERSION) {
+    const cursor = Entry.collection.find({}, { projection: { phone: 1 } });
+    let updates = [];
+    for await (const entry of cursor) {
+      updates.push({ updateOne: { filter: { _id: entry._id }, update: { $set: { phoneKey: phoneKey(entry.phone) } } } });
+      if (updates.length === 500) {
+        await Entry.collection.bulkWrite(updates, { ordered: false });
+        updates = [];
+      }
     }
+    if (updates.length) await Entry.collection.bulkWrite(updates, { ordered: false });
   }
-  if (updates.length) await Entry.collection.bulkWrite(updates, { ordered: false });
   await Settings.collection.updateOne({ key: "main" }, { $set: { schemaVersion: SCHEMA_VERSION }, $unset: { salespersons: "" } });
   if ((raw?.schemaVersion || 1) < SCHEMA_VERSION) console.log("Database upgraded to schema v" + SCHEMA_VERSION + ".");
   return settings;
