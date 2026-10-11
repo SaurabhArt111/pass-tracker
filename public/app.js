@@ -308,7 +308,7 @@ function whatsappDraft(entry) {
   if (!digits || digits.length < 5 || /[,/]/.test(phone)) return null;
   const [year, month, day] = entry.date.split("-");
   const passWord = entry.quantity === 1 ? "pass" : "passes";
-  const message = `Hello! As requested, we're pleased to share ${entry.quantity} complimentary ${passWord} for Suvarn Navratri on ${day}/${month}/${year}. We look forward to celebrating with you!`;
+  const message = `Hello! As requested, we're pleased to share ${entry.quantity} complimentary ${passWord} with you for Suvarn Navratri on ${day}/${month}/${year}. We kindly request that you use the passes yourself and help ensure they don't go unused. Avoid the crowds and enjoy the celebrations—dance, or sit back and relax in our dedicated area, the Shiv Shakti Pavilion. We look forward to celebrating with you!`;
   const url = new URL(`https://wa.me/${digits}`);
   url.searchParams.set("text", message);
   return url.toString();
