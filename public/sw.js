@@ -82,16 +82,22 @@ async function appShell(request) {
   const shell = await cache.match("/");
   if (shell) return shell;
   try { return await fetch(request); }
-  catch { return (await cache.match("/offline.html")) || Response.error(); }
+  catch { return (await cache.match("/offline.html")) || new Response("Offline", { status: 503 }); }
 }
 
 async function cacheFirst(request) {
   const cache = await caches.open(SHELL_CACHE);
   const hit = await cache.match(request, { ignoreSearch: true });
   if (hit) return hit;
-  const response = await fetch(request);
-  if (response.ok && response.type === "basic") cache.put(request, response.clone());
-  return response;
+  try {
+    const response = await fetch(request);
+    if (response.ok && response.type === "basic") cache.put(request, response.clone());
+    return response;
+  } catch (err) {
+    // Offline (or server down) and not precached: answer cleanly instead of leaking an unhandled rejection.
+    if (request.destination === "image") return new Response("", { status: 204 });
+    return new Response("Offline", { status: 503, statusText: "Offline", headers: { "Content-Type": "text/plain" } });
+  }
 }
 
 async function staleWhileRevalidate(request, cacheName) {
@@ -126,6 +132,6 @@ async function networkFirstData(request) {
       headers.set("X-Served-From", "offline-cache");
       return new Response(await hit.blob(), { status: hit.status, statusText: hit.statusText, headers });
     }
-    throw new Error("offline");
+    return new Response(JSON.stringify({ error: "You're offline and this data hasn't been saved on the device yet.", code: "OFFLINE" }), { status: 503, headers: { "Content-Type": "application/json" } });
   }
 }
