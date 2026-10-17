@@ -1012,6 +1012,37 @@ tbody tr:last-child td {
   font-size: .9rem;
 }
 
+.phone-call-link {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: var(--p-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.phone-call-link:hover {
+  text-decoration: underline;
+}
+
+.phone-call-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: .2rem;
+}
+
+.phone-call-link .icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.phone-call-link .call-count {
+  color: var(--muted);
+  font-size: .82em;
+  white-space: nowrap;
+}
+
 .party-cell .duplicate-number-flag,
 .duplicate-number-warning {
   color: var(--danger);
@@ -1116,6 +1147,8 @@ tbody tr:last-child td {
 
 .action-buttons {
   display: flex;
+  /* flex-wrap: wrap;
+  flex-direction: row; */
   gap: .4rem;
   justify-content: flex-end;
 }
@@ -1130,6 +1163,7 @@ tbody tr:last-child td {
   display: grid;
   place-items: center;
   padding: 0;
+  text-decoration: none;
 }
 
 .mini-action.message {
@@ -1141,6 +1175,10 @@ tbody tr:last-child td {
   color: var(--p-text);
   font-weight: 700;
   white-space: nowrap;
+}
+
+.mini-action.call-action {
+  color: var(--p-text);
 }
 
 .mini-action:disabled {
@@ -2075,6 +2113,7 @@ tbody tr:last-child td {
 
   .c-actions .action-buttons {
     justify-content: flex-start;
+    gap: .4rem;
   }
 
   .c-remark {

@@ -82,6 +82,11 @@ entrySchema.index({ date: 1, srNo: 1 }, { unique: true });
 entrySchema.index({ createdAt: -1 });
 entrySchema.index({ phoneKey: 1, deletedAt: 1 });
 
+const phoneCallCounterSchema = new mongoose.Schema({
+  phoneKey: { type: String, required: true, unique: true, index: true },
+  count: { type: Number, min: 0, default: 0 }
+}, { timestamps: true });
+
 // Every create / edit / delete / restore keeps a copy of the entry as it was, so nothing is ever overwritten silently.
 const revisionSchema = new mongoose.Schema({
   entryId: { type: mongoose.Schema.Types.ObjectId, index: true },
@@ -113,6 +118,7 @@ const Session = mongoose.model("Session", sessionSchema);
 const Inventory = mongoose.model("Inventory", inventorySchema);
 const Salesperson = mongoose.model("Salesperson", salespersonSchema);
 const Entry = mongoose.model("Entry", entrySchema);
+const PhoneCallCounter = mongoose.model("PhoneCallCounter", phoneCallCounterSchema);
 
 function validDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -387,14 +393,15 @@ app.post("/api/auth/password", asyncRoute(async (req, res) => {
    Backups: automatic JSON files on disk + manual download / restore
    ========================================================================== */
 async function collectBackup() {
-  const [settings, inventories, salespeople, entries, revisions] = await Promise.all([
+  const [settings, inventories, salespeople, entries, revisions, phoneCallCounters] = await Promise.all([
     Settings.find().lean(), Inventory.find().lean(), Salesperson.find().lean(),
-    Entry.find().sort({ date: 1, srNo: 1 }).lean(), Revision.find().sort({ at: 1 }).lean()
+    Entry.find().sort({ date: 1, srNo: 1 }).lean(), Revision.find().sort({ at: 1 }).lean(),
+    PhoneCallCounter.find().lean()
   ]);
   return {
     app: "navaratri-pass-tracker", format: 1, createdAt: new Date().toISOString(),
-    counts: { entries: entries.length, activeEntries: entries.filter(e => !e.deletedAt).length, salespeople: salespeople.length, inventories: inventories.length, revisions: revisions.length },
-    data: { settings, inventories, salespeople, entries, revisions }
+    counts: { entries: entries.length, activeEntries: entries.filter(e => !e.deletedAt).length, salespeople: salespeople.length, inventories: inventories.length, revisions: revisions.length, phoneCallCounters: phoneCallCounters.length },
+    data: { settings, inventories, salespeople, entries, revisions, phoneCallCounters }
   };
 }
 const todayStamp = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
@@ -484,6 +491,14 @@ app.post("/api/backup/restore", express.json({ limit: "100mb" }), asyncRoute(asy
       result.inventoriesAdded++;
     }
   }
+  for (const counter of body.data.phoneCallCounters || []) {
+    const key = String(counter?.phoneKey || "");
+    const count = Number(counter?.count);
+    if (!/^\d{5,30}$/.test(key) || !Number.isSafeInteger(count) || count < 0) continue;
+    await PhoneCallCounter.findOneAndUpdate(
+      { phoneKey: key }, { $max: { count } }, { upsert: true, setDefaultsOnInsert: true }
+    );
+  }
   for (const item of body.data.entries) {
     const id = oid(item?._id);
     const quantity = Number(item?.quantity);
@@ -525,6 +540,25 @@ app.post("/api/backup/restore", express.json({ limit: "100mb" }), asyncRoute(asy
 }));
 
 app.get("/api/health", (req, res) => res.json({ ok: true, database: mongoose.connection.readyState === 1 ? "connected" : "disconnected" }));
+
+app.post("/api/phone-calls", asyncRoute(async (req, res) => {
+  const phone = String(req.body?.phone || "").trim();
+  checkPhone(phone);
+  if (!phone || /[,/]/.test(phone)) throw bad("Enter one valid phone number to call.", "phone");
+  const key = phoneKey(phone);
+  if (!/^\d{5,30}$/.test(key)) throw bad("Enter one valid phone number to call.", "phone");
+  let counter;
+  try {
+    counter = await PhoneCallCounter.findOneAndUpdate(
+      { phoneKey: key }, { $inc: { count: 1 } }, { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+  } catch (error) {
+    if (error.code !== 11000) throw error;
+    counter = await PhoneCallCounter.findOneAndUpdate({ phoneKey: key }, { $inc: { count: 1 } }, { new: true });
+  }
+  scheduleBackup();
+  res.json({ phoneKey: key, count: counter.count });
+}));
 
 app.get("/api/settings", asyncRoute(async (req, res) => {
   res.json(await settingsPayload());
@@ -696,6 +730,8 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
     .lean();
   if (trash === "true") return res.json(entries);
   const keys = [...new Set(entries.map(entry => entry.phoneKey).filter(key => key && key.length >= 5))];
+  const callCounters = keys.length ? await PhoneCallCounter.find({ phoneKey: { $in: keys } }).select("phoneKey count").lean() : [];
+  const callCountByKey = new Map(callCounters.map(counter => [counter.phoneKey, counter.count]));
   const duplicates = keys.length ? await Entry.aggregate([
     { $match: { phoneKey: { $in: keys }, deletedAt: null } },
     { $group: { _id: "$phoneKey", count: { $sum: 1 } } },
@@ -703,7 +739,11 @@ app.get("/api/entries", asyncRoute(async (req, res) => {
     { $project: { _id: 1 } }
   ]) : [];
   const duplicateKeys = new Set(duplicates.map(item => item._id));
-  res.json(entries.map(entry => ({ ...entry, duplicatePhone: !!entry.phoneKey && duplicateKeys.has(entry.phoneKey) })));
+  res.json(entries.map(entry => ({
+    ...entry,
+    duplicatePhone: !!entry.phoneKey && duplicateKeys.has(entry.phoneKey),
+    callCount: callCountByKey.get(entry.phoneKey) || 0
+  })));
 }));
 
 app.get("/api/entries/duplicate-phone", asyncRoute(async (req, res) => {

@@ -12,6 +12,7 @@ A private, single-event pass and ticket tracking app built with Node.js, Express
 - Salesperson list imported from an Excel workbook in Settings, with the option to add a new salesperson while entering a pass
 - Entry form: daily Sr. No., creation date/time, event date, party name, phone, salesperson, pass quantity, Sent/Pending status, Present/Absent/Not Marked attendance, remarks
 - WhatsApp message draft after saving a new entry or choosing **Send message** from its list row; the user reviews and sends it from WhatsApp
+- Use the phone link on the dashboard or the **Call** button beside **Message** in the entries list to open the phone dialer; per-number call counts are saved with the database
 - Create, edit and delete entries
 - Duplicate phone-number warnings when entering entries and duplicate labels in entry lists (number formatting is ignored; intentional duplicates can be confirmed)
 - Inventory validation: prevents over-allocation; deleting an entry returns passes to inventory
@@ -83,6 +84,7 @@ For development with Node's watch mode, run `npm run dev`.
 | `inventories` | Only dates with a custom limit (`limitOverride`) or notes |
 | `salespeople` | Salesperson list (unique, case-insensitive name, active flag) |
 | `users`, `sessions` | Login (hashed password) and active sign-ins |
+| `phonecallcounters` | Call counts keyed by normalized phone number |
 | `revisions` | Previous versions of entries |
 | `entries` | Pass entries (soft-deleted ones have `deletedAt`); `salespersonId` links to a salesperson, `salesperson` keeps the name for lists/reports |
 

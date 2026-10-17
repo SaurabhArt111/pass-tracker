@@ -327,6 +327,21 @@ function attendancePill(value) {
 }
 const srLabel = (n) => String(n).padStart(2, "0");
 
+function phoneCallMarkup(entry, { action = false } = {}) {
+  const phone = String(entry.phone || "").trim();
+  const digits = phone.replace(/\D/g, "");
+  if (!digits || digits.length < 5 || /[,/]/.test(phone)) return esc(phone || "No phone");
+  let key = String(entry.phoneKey || digits);
+  if (!entry.phoneKey && key.startsWith("0091") && key.length === 14) key = key.slice(4);
+  else if (!entry.phoneKey && key.startsWith("91") && key.length === 12) key = key.slice(2);
+  const dial = phone.replace(/[^\d+]/g, "");
+  const callCount = Math.max(0, Number(entry.callCount) || 0);
+  const className = action ? "mini-action message call-action" : "phone-call-link";
+  const label = action ? `Call x${callCount}` : esc(phone);
+  const accessibleLabel = `Dial ${esc(phone)}. Selected ${callCount} times`;
+  return `<a class="${className}" data-call-phone="${esc(phone)}" data-phone-key="${esc(key)}" data-call-count="${callCount}" href="tel:${esc(dial)}" aria-label="${accessibleLabel}" title="Call ${esc(phone)}">${icon("phone")}<span>${label}</span>${action ? "" : `<span class="call-count">[Call x${callCount}]</span>`}</a>`;
+}
+
 function rowAttrs(e) {
   return `class="entry-row" data-id="${esc(e._id)}" tabindex="0" role="button" aria-label="Edit entry ${srLabel(e.srNo)} for ${esc(e.partyName)}"`;
 }
@@ -380,7 +395,7 @@ async function loadDashboard() {
     rows.innerHTML = recent.map(e => `<tr ${rowAttrs(e)}>
       <td class="c-sr"><span class="sr">${srLabel(e.srNo)}</span></td>
       <td class="c-party"><div class="party-cell"><strong>${esc(e.partyName)}</strong>${e.salesperson ? `<small>Salesperson: ${esc(e.salesperson)}</small>` : ""}${e.duplicatePhone ? `<small class="duplicate-number-flag">Duplicate phone number</small>` : ""}</div></td>
-      <td class="c-phone">${esc(e.phone || "—")}</td>
+      <td class="c-phone">${e.phone ? phoneCallMarkup(e) : "—"}</td>
       <td class="c-qty"><strong>${e.quantity}</strong></td>
       <td class="c-status">${statusPill(e.status)}</td>
       <td class="c-att">${attendancePill(e.attendance)}</td></tr>`).join("");
@@ -466,6 +481,7 @@ async function loadEntries() {
       <td class="c-att">${attendancePill(e.attendance)}</td>
       <td class="c-remark${e.remark ? "" : " is-empty"}" title="${esc(e.remark)}">${esc(e.remark || "—")}</td>
       <td class="c-actions"><div class="action-buttons">
+        ${e.phone ? phoneCallMarkup(e, { action: true }) : ""}
         <button class="mini-action message" type="button" data-whatsapp="${esc(e._id)}" ${whatsappDraft(e) ? "" : "disabled"} title="${whatsappDraft(e) ? "Send message on WhatsApp" : "Add one valid phone number to send a message"}" aria-label="Send message to ${esc(e.partyName)} on WhatsApp">${icon("send")}<span>Message</span></button>
         <button class="mini-action" type="button" data-edit="${esc(e._id)}" title="Edit entry" aria-label="Edit entry ${srLabel(e.srNo)}">${icon("edit")}</button>
         <button class="mini-action delete" type="button" data-delete="${esc(e._id)}" title="Move to Trash" aria-label="Delete entry ${srLabel(e.srNo)}">${icon("trash")}</button>
@@ -871,6 +887,31 @@ async function restoreEntry(id, button) {
   }
 }
 function handleRowActivate(event, container) {
+  const phoneLink = event.target.closest("[data-call-phone]");
+  if (phoneLink) {
+    const phone = phoneLink.dataset.callPhone;
+    const phoneKey = phoneLink.dataset.phoneKey;
+    api("/api/phone-calls", { method: "POST", body: JSON.stringify({ phone }), keepalive: true })
+      .then(result => {
+        const links = [...document.querySelectorAll("[data-call-phone]")].filter(link => link.dataset.phoneKey === phoneKey);
+        const displayed = links.reduce((highest, link) => Math.max(highest, Number(link.dataset.callCount) || 0), 0);
+        const count = Math.max(displayed, Number(result.count) || 0);
+        links.forEach(link => {
+          link.dataset.callCount = String(count);
+          const countLabel = link.querySelector(".call-count") || link.querySelector("span");
+          if (countLabel) countLabel.textContent = link.classList.contains("call-action") ? `Call x${count}` : `[Call x${count}]`;
+          link.setAttribute("aria-label", `Dial ${link.dataset.callPhone}. Selected ${count} times`);
+        });
+      })
+      .catch(err => {
+        if (err.status === 404) {
+          reportError(new ApiError("This server doesn't have the call-count route yet. Restart the updated server and reload the app.", { status: 404 }));
+          return;
+        }
+        reportError(err);
+      });
+    return;
+  }
   const whatsapp = event.target.closest("[data-whatsapp]");
   if (whatsapp) {
     const entry = state.byId.get(whatsapp.dataset.whatsapp);
