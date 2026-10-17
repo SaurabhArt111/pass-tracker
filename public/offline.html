@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#062f2c">
+  <title>Offline · Navaratri Pass Tracker</title>
+  <link rel="icon" href="/icons/favicon-32.png">
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 1.5rem;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f4f8f7; color: #0f2422; }
+    main { max-width: 26rem; text-align: center; }
+    img { width: 5rem; height: 5rem; border-radius: 1.2rem; }
+    h1 { margin: 1rem 0 .4rem; font-size: 1.5rem; }
+    p { margin: 0 0 1.25rem; line-height: 1.5; color: #3e5754; }
+    button { font: inherit; font-weight: 600; border: 0; border-radius: .8rem; padding: .75rem 1.4rem; background: #0b6b66; color: #fff; cursor: pointer; min-height: 2.75rem; }
+    @media (prefers-color-scheme: dark) { body { background: #081312; color: #e9f4f2; } p { color: #bcd3cf; } button { background: #4fd8c8; color: #03211e; } }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/icons/icon-192.png" alt="" width="80" height="80">
+    <h1>You're offline</h1>
+    <p>The tracker couldn't load and nothing is saved on this device yet. Reconnect to the internet or your local network, then try again.</p>
+    <button type="button" onclick="location.href='/dashboard'">Try again</button>
+  </main>
+  <script>addEventListener("online", function () { location.href = "/dashboard"; });</script>
+</body>
+</html>

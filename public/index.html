@@ -5,7 +5,42 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#FBF6F5">
+  <meta name="theme-color" content="#f4f8f7">
+  <meta name="description" content="Private day-wise Navaratri pass and ticket tracker: entries, daily inventory, WhatsApp drafts and Excel reports.">
+  <meta name="application-name" content="Pass Tracker">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pass Tracker">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="msapplication-TileColor" content="#062f2c">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/icons/favicon-16.png" type="image/png" sizes="16x16">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/icons/apple-touch-icon-152.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="/icons/apple-touch-icon-167.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1320x2868.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1206x2622.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1290x2796.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1179x2556.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1284x2778.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1170x2532.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1125x2436.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1242x2688.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-828x1792.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/splash/splash-1242x2208.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-750x1334.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-640x1136.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-2048x2732.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-1668x2388.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-1668x2224.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-1640x2360.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-1620x2160.png">
+  <link rel="apple-touch-startup-image" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/splash/splash-1536x2048.png">
   <title>Navaratri Pass Tracker</title>
   <script>
     /* Apply the saved theme (or the system theme) before first paint to avoid a flash. */
@@ -25,10 +60,17 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=Noto+Sans+Gujarati:wght@400;600;700&display=swap"
     rel="stylesheet">
+  <link rel="preload" href="/styles.css" as="style">
   <link rel="stylesheet" href="/styles.css">
 </head>
 
 <body>
+  <!-- Launch splash: shown until the app has checked the session (instant, no layout jump) -->
+  <div class="boot-splash" id="bootSplash" aria-hidden="true">
+    <div class="boot-mark"><svg width="44" height="44" viewBox="0 0 32 32"><path d="M16 3c2.6 3 4 5.2 4 7.6A4 4 0 0 1 16 14.5a4 4 0 0 1-4-3.9C12 8.2 13.4 6 16 3z" fill="#ffb74d"/><path d="M4 18h24c0 5.2-4.7 9-12 9S4 23.2 4 18z" fill="#fff"/></svg></div>
+    <strong>Navaratri Pass Tracker</strong>
+    <span class="boot-bar"></span>
+  </div>
   <!-- Icon sprite -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
     <defs>
@@ -196,7 +238,7 @@
     <svg class="icon">
       <use href="#i-offline" />
     </svg>
-    <span>You're offline. Changes can't be saved until the connection returns.</span>
+    <span>You're offline. Showing the last saved data; changes can't be saved until the connection returns.</span>
   </div>
 
   <div class="app-shell" id="appShell">
@@ -412,7 +454,11 @@
                 <use href="#i-search" />
               </svg><input id="entrySearch" type="search" placeholder="Search party, salesperson or phone"
                 aria-label="Search entries" autocomplete="off"></div>
-            <div class="filter-controls">
+            <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterControls" aria-label="Filters">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+              <span class="filter-badge" id="filterBadge" hidden>0</span>
+            </button>
+            <div class="filter-controls" id="filterControls">
               <div class="filter-field"><label for="entriesDate">Event date</label><input type="date" id="entriesDate">
               </div>
               <div class="filter-field"><label for="entriesStatus">Status</label><select id="entriesStatus">
@@ -455,6 +501,15 @@
           <div class="table-footer"><span id="entryCountLabel">0 records</span><span>Sr. no. is sequential within each
               event date.</span></div>
         </article>
+      </section>
+
+      <section class="page" id="page-notfound">
+        <div class="notfound">
+          <span class="brand-mark"><svg class="icon"><use href="#i-diya" /></svg></span>
+          <h1>Page not found</h1>
+          <p>That address doesn't exist in the tracker. It may have been mistyped or moved.</p>
+          <a class="button button-primary" href="/dashboard" data-goto="dashboard">Go to Dashboard</a>
+        </div>
       </section>
 
       <section class="page" id="page-reports">
@@ -544,6 +599,27 @@
             <button type="button" role="radio" aria-checked="false" data-theme-choice="dark"><svg class="icon">
                 <use href="#i-moon" />
               </svg>Dark</button>
+          </div>
+        </article>
+        <article class="panel settings-panel">
+          <div class="settings-section-head">
+            <div class="settings-icon"><svg class="icon">
+                <use href="#i-download" />
+              </svg></div>
+            <div>
+              <h2>App &amp; offline</h2>
+              <p>Install the tracker like a native app on phone, tablet or computer.</p>
+            </div>
+          </div>
+          <div class="pwa-settings">
+            <p id="installStatus" class="pwa-line"></p>
+            <button class="button button-primary" id="installButton" type="button" hidden><svg class="icon"><use href="#i-download" /></svg>Install app</button>
+            <p id="offlineStatus" class="pwa-line">Offline support turns on after the first visit over a secure connection.</p>
+            <div class="pwa-update-row">
+              <button class="button button-secondary" id="checkUpdates" type="button"><svg class="icon"><use href="#i-refresh" /></svg>Check for updates</button>
+              <span id="updateResult" class="pwa-line" role="status"></span>
+              <small id="appVersion" class="pwa-version"></small>
+            </div>
           </div>
         </article>
         <article class="panel settings-panel">
@@ -756,10 +832,40 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 
+  <!-- PWA: install prompt, update notice, iOS instructions -->
+  <aside class="pwa-banner" id="installBanner" role="region" aria-labelledby="installTitle" hidden>
+    <img src="/icons/icon-96.png" alt="" width="44" height="44">
+    <div class="pwa-banner-text"><strong id="installTitle">Install Pass Tracker</strong><span id="installText"></span></div>
+    <div class="pwa-banner-actions">
+      <button class="button button-primary button-small" id="installAccept" type="button">Install</button>
+      <button class="button button-secondary button-small" id="installDismiss" type="button">Not now</button>
+    </div>
+  </aside>
+  <aside class="pwa-banner pwa-update" id="updateBanner" role="status" hidden>
+    <span class="pwa-update-icon"><svg class="icon"><use href="#i-refresh" /></svg></span>
+    <div class="pwa-banner-text"><strong>Update available</strong><span>A newer version of the app is ready. Save any open entry first.</span></div>
+    <div class="pwa-banner-actions">
+      <button class="button button-primary button-small" id="updateNow" type="button">Update</button>
+      <button class="button button-secondary button-small" id="updateLater" type="button">Later</button>
+    </div>
+  </aside>
+  <div class="modal-backdrop" id="iosInstallHelp" hidden>
+    <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="iosTitle">
+      <h2 id="iosTitle">Add to Home Screen</h2>
+      <ol class="ios-steps">
+        <li>Tap the <b>Share</b> button in Safari's toolbar.</li>
+        <li>Scroll down and choose <b>Add to Home Screen</b>.</li>
+        <li>Tap <b>Add</b>. The app opens full-screen from your home screen.</li>
+      </ol>
+      <div class="button-row"><button class="button button-primary" id="iosInstallClose" type="button">Got it</button></div>
+    </div>
+  </div>
+
   <!-- Route-based add / edit entry form -->
   <div class="modal-backdrop" id="entryModal" hidden>
     <article class="panel form-panel" id="entryFormPanel" role="dialog" aria-modal="true"
       aria-labelledby="entryFormTitle" aria-describedby="entryFormSub">
+      <div class="sheet-grabber" aria-hidden="true"></div>
       <div class="panel-heading">
         <div>
           <h2 id="entryFormTitle">Add pass entry</h2>
@@ -800,19 +906,23 @@
               <small class="field-error" id="err-salesperson"></small>
             </div>
             <div class="field"><label for="quantity">Pass quantity <em>*</em></label>
-              <input type="number" id="quantity" min="1" step="1" value="1" inputmode="numeric" required
-                aria-describedby="hint-quantity err-quantity">
+              <div class="qty-stepper">
+                <button type="button" id="qtyMinus" aria-label="Decrease quantity">&minus;</button>
+                <input type="number" id="quantity" min="1" step="1" value="1" inputmode="numeric" required
+                  aria-describedby="hint-quantity err-quantity" enterkeyhint="next">
+                <button type="button" id="qtyPlus" aria-label="Increase quantity">+</button>
+              </div>
               <small id="hint-quantity">Available for this date: <b id="formAvailable">—</b></small>
               <small class="field-error" id="err-quantity"></small>
             </div>
             <div class="field"><label for="entryStatus">Status</label>
-              <select id="entryStatus">
+              <select id="entryStatus" data-segmented>
                 <option>Pending</option>
                 <option>Sent</option>
               </select>
             </div>
             <div class="field"><label for="attendance">Present / absent</label>
-              <select id="attendance">
+              <select id="attendance" data-segmented>
                 <option value="Not Marked">Not marked</option>
                 <option>Present</option>
                 <option>Absent</option>
@@ -856,6 +966,7 @@
     </div>
   </div>
   <script src="/app.js"></script>
+  <script src="/pwa.js" defer></script>
 </body>
 
 </html>

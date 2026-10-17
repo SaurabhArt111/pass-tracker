@@ -16,7 +16,47 @@ const BACKUP_KEEP_DAYS = Number(process.env.BACKUP_KEEP_DAYS || 30);
 app.disable("x-powered-by");
 // The restore route has its own, larger JSON limit.
 app.use((req, res, next) => req.path === "/api/backup/restore" ? next() : express.json({ limit: "1mb" })(req, res, next));
-app.use(express.static(path.join(__dirname, "public")));
+// Basic hardening headers; API responses are never cached (private data, and the service worker must not keep them).
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (req.path.startsWith("/api")) res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
+// The service worker is served with a build id derived from the app files, so every deploy produces a new worker
+// (which the app offers to the user as "Update available") without anyone remembering to bump a version number.
+const SW_FILES = ["sw.js", "index.html", "app.js", "styles.css", "pwa.js", "offline.html", "manifest.webmanifest"];
+let swCache = { sig: "", body: "" };
+app.get("/sw.js", (req, res, next) => {
+  try {
+    const dir = path.join(__dirname, "public");
+    const sig = SW_FILES.map(f => { const st = fs.statSync(path.join(dir, f)); return `${f}:${st.mtimeMs}:${st.size}`; }).join("|");
+    if (sig !== swCache.sig) {
+      const hash = crypto.createHash("sha1");
+      SW_FILES.forEach(f => hash.update(fs.readFileSync(path.join(dir, f))));
+      swCache = { sig, body: fs.readFileSync(path.join(dir, "sw.js"), "utf8").replace("__BUILD_ID__", hash.digest("hex").slice(0, 12)) };
+    }
+    res.set({ "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache", "Service-Worker-Allowed": "/" }).send(swCache.body);
+  } catch (err) { next(err); }
+});
+
+// Static files (PWA): the service worker, manifest and HTML are always revalidated so updates roll out immediately;
+// icons and splash images can be cached for longer.
+app.use(express.static(path.join(__dirname, "public"), {
+  index: false,
+  setHeaders(res, filePath) {
+    const name = path.basename(filePath);
+    if (name === "sw.js" || name === "manifest.webmanifest" || name.endsWith(".html")) {
+      res.setHeader("Cache-Control", "no-cache");
+    } else if (filePath.includes(`${path.sep}icons${path.sep}`) || filePath.includes(`${path.sep}splash${path.sep}`)) {
+      res.setHeader("Cache-Control", "public, max-age=604800");
+    } else {
+      res.setHeader("Cache-Control", "no-cache");
+    }
+    if (name === "sw.js") res.setHeader("Service-Worker-Allowed", "/");
+  }
+}));
 
 // Every API error has the same shape: { error: "message", code: "SOME_CODE", field?: "fieldName" }
 class HttpError extends Error {
@@ -952,7 +992,13 @@ app.get("/api/reports.xlsx", asyncRoute(async (req, res) => {
 // Unknown API routes get JSON, not the HTML page.
 app.use("/api", (req, res, next) => next(new HttpError(404, "That API route doesn't exist.", { code: "NOT_FOUND" })));
 
-app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+// App routes (/dashboard, /entries/<id>, ...) all serve the single-page shell. Requests for missing files
+// (anything with a file extension) get a real 404 so the service worker never caches HTML in place of an asset.
+app.get("*", (req, res) => {
+  if (path.extname(req.path)) return res.status(404).type("text/plain").send("Not found");
+  res.setHeader("Cache-Control", "no-cache");
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 // Central error handler: turns anything thrown into a consistent JSON response.
 // eslint-disable-next-line no-unused-vars

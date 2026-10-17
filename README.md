@@ -5,8 +5,9 @@ A private, single-event pass and ticket tracking app built with Node.js, Express
 ## Features
 
 - Responsive dashboard for desktop, tablet and mobile, with a bottom navigation bar on phones
-- Light and dark themes (Navaratri palette: kumkum crimson + marigold). Follows your device setting by default; switch between System / Light / Dark from the top bar or **Settings → Appearance**
+- Light and dark themes (peacock teal + saffron). Follows your device setting by default; switch between System / Light / Dark from the top bar or **Settings → Appearance**
 - Add and edit entries in a modal using routes (`#entries/new` and `#entries/<id>`). Browser back/forward and direct entry links are supported; click or tap any row to open it for editing
+- On phones the entry form, delete confirmation and iOS install help are real bottom sheets: drag the grabber or header (or pull down from the top of the form) to dismiss; unsaved forms spring back. The sheet also stays above the on-screen keyboard
 - Clear error handling: inline field validation, readable messages when the server or database is unreachable, retry buttons when a list fails to load, and an offline banner
 - Day-wise inventory with configurable default daily pass limit
 - Salesperson list imported from an Excel workbook in Settings, with the option to add a new salesperson while entering a pass
@@ -53,6 +54,21 @@ A private, single-event pass and ticket tracking app built with Node.js, Express
 7. Open `http://localhost:3000` in your browser.
 
 For development with Node's watch mode, run `npm run dev`.
+
+
+## Installable app (PWA)
+
+The tracker is a Progressive Web App: installable on Android, Windows, macOS, Linux and iOS/iPadOS, launching full-screen in its own window.
+
+- **HTTPS is required** for install and offline support (except on `localhost`). Put the app behind HTTPS (reverse proxy, Cloudflare Tunnel, etc.). On a plain `http://192.168.x.x` address it still works as a normal website; the install prompt and service worker simply stay off.
+- **Install:** Chrome/Edge/Android show an in-app "Install" banner (also **Settings -> App & offline**). On iPhone/iPad use Safari -> Share -> **Add to Home Screen** (the banner explains it).
+- **Offline:** the app shell opens without a connection and shows the last entries/inventory it loaded. Nothing can be saved offline. Offline copies are removed on sign-out. Sign-in, backups, reports and every write always go to the server.
+- **Updates:** `/sw.js` gets a build id hashed from the app files, so every deploy is detected automatically. Users see an "Update available" bar; the app is only reloaded when they tap **Update**.
+- Files: `public/manifest.webmanifest`, `public/sw.js`, `public/pwa.js`, `public/offline.html`, `public/icons/`, `public/splash/`, `public/screenshots/`. `tools/generate-icons.js` regenerates icons/splash images (needs `npm i --no-save sharp`).
+
+## Routes
+
+The app now uses real URLs instead of `#` links: `/dashboard`, `/entries`, `/entries/recent`, `/entries/trash`, `/entries/new`, `/entries/<id>`, `/reports`, `/settings`, `/login`. Unknown addresses show a "Page not found" view. Old `#entries/<id>` bookmarks are converted automatically. The server returns the app for any of these paths (missing files with an extension return a real 404).
 
 ## Sign-in
 

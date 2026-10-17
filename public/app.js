@@ -197,7 +197,7 @@ function applyTheme(pref) {
   root.dataset.themePref = pref;
   root.style.colorScheme = dark ? "dark" : "light";
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", getComputedStyle(root).getPropertyValue("--paper").trim() || (dark ? "#150b0f" : "#fbf6f5"));
+  if (meta) meta.setAttribute("content", getComputedStyle(root).getPropertyValue("--paper").trim() || (dark ? "#081312" : "#f4f8f7"));
   $("themeToggleIcon").setAttribute("href", `#i-${THEME_ICON[pref]}`);
   $("themeToggle").setAttribute("aria-label", `Theme: ${THEME_LABEL[pref]}. Switch to ${THEME_LABEL[THEME_NEXT[pref]]}.`);
   $("themeToggle").title = `Theme: ${THEME_LABEL[pref]}`;
@@ -256,12 +256,134 @@ document.addEventListener("keydown", (event) => {
 });
 
 /* ==========================================================================
+   Native-feeling bottom sheets (phones): drag the grabber/header, or pull down from the top of the
+   scrolled content, to dismiss. Rubber-bands, follows the finger, flings on velocity, springs back otherwise.
+   Also keeps the sheet above the on-screen keyboard (visualViewport).
+   ========================================================================== */
+const sheetMQ = window.matchMedia("(max-width: 760px)");
+function makeSheet(backdrop, panel, { handles = [], scroller, canDismiss = () => true, onBlocked } = {}) {
+  let startY = 0, lastY = 0, lastT = 0, vel = 0, dragging = false, startedInScroller = false, pending = false;
+  const setDrag = (dy) => {
+    panel.style.transform = `translateY(${dy}px)`;
+    backdrop.style.setProperty("--fade", String(Math.max(.15, 1 - dy / (panel.offsetHeight || 600))));
+  };
+  const reset = (animate) => {
+    panel.style.transition = animate ? "transform .28s cubic-bezier(.2,.8,.2,1)" : "";
+    panel.style.transform = "";
+    backdrop.style.removeProperty("--fade");
+    if (animate) setTimeout(() => { panel.style.transition = ""; }, 300);
+  };
+  const begin = (y) => { startY = lastY = y; lastT = performance.now(); vel = 0; dragging = false; };
+  const move = (y, ev) => {
+    const dy = y - startY;
+    const now = performance.now();
+    vel = (y - lastY) / Math.max(1, now - lastT); lastY = y; lastT = now;
+    if (!dragging) { if (dy > 6) { dragging = true; panel.style.transition = "none"; } else return false; }
+    // rubber-band upwards, 1:1 downwards
+    setDrag(dy > 0 ? dy : dy / 6);
+    if (ev && ev.cancelable) ev.preventDefault();
+    return true;
+  };
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    const dy = lastY - startY;
+    const dismiss = dy > Math.min(160, panel.offsetHeight * .3) || vel > .6;
+    if (dismiss && canDismiss()) {
+      panel.style.transition = "transform .22s ease-in";
+      panel.style.transform = "translateY(105%)";
+      backdrop.style.setProperty("--fade", "0");
+      if (navigator.vibrate) navigator.vibrate(8);
+      setTimeout(() => { modalDismiss[backdrop.id]?.(); reset(false); }, 200);
+    } else {
+      if (dismiss && onBlocked) onBlocked();
+      reset(true);
+    }
+  };
+  // Grabber + header: pointer events (touch-action:none keeps the browser from scrolling)
+  handles.filter(Boolean).forEach(handle => {
+    handle.style.touchAction = "none";
+    handle.addEventListener("pointerdown", (e) => { if (!sheetMQ.matches || e.target.closest("button, input, select, textarea, a")) return; begin(e.clientY); handle.setPointerCapture(e.pointerId); pending = true; });
+    handle.addEventListener("pointermove", (e) => { if (pending) move(e.clientY, e); });
+    const up = () => { if (!pending) return; pending = false; end(); };
+    handle.addEventListener("pointerup", up); handle.addEventListener("pointercancel", up);
+  });
+  // Content: when scrolled to the top, pulling down drags the whole sheet
+  if (scroller) {
+    scroller.addEventListener("touchstart", (e) => { startedInScroller = sheetMQ.matches && scroller.scrollTop <= 0; if (startedInScroller) begin(e.touches[0].clientY); }, { passive: true });
+    scroller.addEventListener("touchmove", (e) => {
+      if (!startedInScroller) return;
+      if (scroller.scrollTop > 0 && !dragging) { startedInScroller = false; return; }
+      move(e.touches[0].clientY, e);
+    }, { passive: false });
+    scroller.addEventListener("touchend", () => { startedInScroller = false; end(); });
+    scroller.addEventListener("touchcancel", () => { startedInScroller = false; end(); });
+    scroller.style.overscrollBehavior = "contain";
+  }
+}
+makeSheet($("entryModal"), $("entryFormPanel"), {
+  handles: [document.querySelector("#entryFormPanel .sheet-grabber"), document.querySelector("#entryFormPanel .panel-heading")],
+  scroller: document.querySelector("#entryFormPanel .modal-body"),
+  canDismiss: () => !state.formDirty,
+  onBlocked: () => toast("You have unsaved changes. Tap Cancel to discard them, or Save entry.", "error")
+});
+for (const [bd, sel] of [["confirmBackdrop", "#confirmBackdrop .confirm-modal"], ["iosInstallHelp", "#iosInstallHelp .confirm-modal"]]) {
+  const p = document.querySelector(sel);
+  makeSheet($(bd), p, { handles: [p] });
+}
+modalDismiss.iosInstallHelp = () => { $("iosInstallHelp").hidden = true; };
+
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const sync = () => {
+    const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty("--kb", `${Math.round(kb)}px`);
+    const f = document.activeElement;
+    if (kb > 80 && f && f.closest && f.closest(".modal-body")) setTimeout(() => f.scrollIntoView({ block: "center", behavior: "smooth" }), 60);
+  };
+  vv.addEventListener("resize", sync); vv.addEventListener("scroll", sync);
+}
+
+/* ==========================================================================
    Navigation
    ========================================================================== */
 const PAGE_LABELS = { dashboard: "Dashboard", entries: "Pass entries", reports: "Reports & export", settings: "Settings" };
+const APP_NAME = "Navaratri Pass Tracker";
 
-function setPage(page, { updateHash = true } = {}) {
-  if (!PAGE_LABELS[page]) page = "dashboard";
+/* ---------- Path-based routes (History API) ----------
+   /dashboard   /entries   /entries/recent   /entries/trash   /entries/new   /entries/<id>
+   /reports     /settings  /login            anything else -> friendly "not found" page.
+   Old hash links (#entries/<id>) are converted on load so bookmarks keep working. */
+function parseRoute(pathname = location.pathname) {
+  const parts = pathname.replace(/\/+$/, "").split("/").filter(Boolean).map(p => { try { return decodeURIComponent(p); } catch { return p; } });
+  const [page, sub, ...extra] = parts;
+  if (!page) return { page: "dashboard", canonical: "/dashboard" };
+  if (page === "login") return { page: "login", canonical: "/login" };
+  if (!PAGE_LABELS[page] || extra.length) return { page: "notfound" };
+  if (page === "entries") {
+    if (sub === "recent" || sub === "trash") return { page, view: sub };
+    if (sub) return { page, entryId: sub };
+  } else if (sub) return { page: "notfound" };
+  return { page };
+}
+function pathFor(page, sub) {
+  return `/${page}${sub ? `/${encodeURIComponent(sub)}` : ""}`;
+}
+function migrateLegacyHash() {
+  if (!location.hash || location.hash.length < 2) return;
+  const legacy = location.hash.slice(1);
+  if (/^(dashboard|entries|reports|settings)(\/[^/]+)?$/.test(legacy)) history.replaceState(null, "", `/${legacy}`);
+}
+function setDocumentTitle(label) {
+  document.title = label ? `${label} · ${APP_NAME}` : APP_NAME;
+}
+function navigate(path, { replace = false } = {}) {
+  if (location.pathname !== path) history[replace ? "replaceState" : "pushState"](null, "", path);
+  handleLocationChange();
+}
+function setPage(page, { updateUrl = true } = {}) {
+  const known = !!PAGE_LABELS[page];
+  if (!known && page !== "notfound") page = "dashboard";
   state.page = page;
   document.querySelectorAll(".page").forEach(el => el.classList.toggle("active", el.id === `page-${page}`));
   document.querySelectorAll("[data-page]").forEach(el => {
@@ -269,24 +391,46 @@ function setPage(page, { updateHash = true } = {}) {
     el.classList.toggle("active", active);
     if (active) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
   });
-  $("crumb").textContent = PAGE_LABELS[page];
-  if (updateHash && location.hash !== `#${page}`) history.pushState(null, "", `#${page}`);
+  const label = known ? PAGE_LABELS[page] : "Page not found";
+  $("crumb").textContent = label;
+  setDocumentTitle(label);
+  if (updateUrl && known && location.pathname !== `/${page}`) history.pushState(null, "", `/${page}`);
   window.scrollTo({ top: 0 });
   refreshCurrentPage();
 }
-function routeParts() {
-  return location.hash.slice(1).split("/").filter(Boolean);
+function applyEntriesView(view) {
+  const trash = view === "trash", recent = view === "recent";
+  if (state.trashView === trash && state.recentEntries === recent) return false;
+  state.trashView = trash;
+  state.recentEntries = recent;
+  $("trashButton").setAttribute("aria-pressed", String(trash));
+  $("recentEntriesButton").setAttribute("aria-pressed", String(recent));
+  if (trash || recent) {
+    $("entriesDate").value = ""; $("entriesStatus").value = ""; $("entriesAttendance").value = ""; $("entrySearch").value = "";
+  } else {
+    $("entriesDate").value = todayISO();
+  }
+  return true;
+}
+function entriesBasePath() {
+  return state.trashView ? "/entries/trash" : state.recentEntries ? "/entries/recent" : "/entries";
 }
 function handleLocationChange() {
   if (!state.authed) return;
-  const [page, routeId] = routeParts();
-  if (page === "entries" && routeId) {
-    setPage("entries", { updateHash: false });
-    if (state.entryRouteId !== routeId) openEntryRoute(routeId);
+  const route = parseRoute();
+  if (route.page === "login") return navigate("/dashboard", { replace: true });
+  if (route.canonical && route.canonical !== location.pathname) history.replaceState(null, "", route.canonical);
+  if (route.page === "entries" && route.entryId) {
+    if (state.page !== "entries") setPage("entries", { updateUrl: false });
+    setDocumentTitle(route.entryId === "new" ? "New entry" : "Edit entry");
+    if (state.entryRouteId !== route.entryId) openEntryRoute(route.entryId);
     return;
   }
   if (state.entryRouteId || modalStack.some(m => m.el.id === "entryModal")) closeEntryRoute();
-  setPage(page || "dashboard", { updateHash: false });
+  const viewChanged = route.page === "entries" ? applyEntriesView(route.view) : false;
+  const samePage = state.page === route.page;
+  setPage(route.page, { updateUrl: false });
+  if (samePage && viewChanged) { /* setPage already reloaded the list */ }
 }
 function refreshCurrentPage() {
   if (!state.authed) return;
@@ -425,7 +569,48 @@ $("limitForm").addEventListener("submit", (event) => {
 });
 $("resetDateLimit").addEventListener("click", () => saveDateLimit(null));
 
+/* ---------- Segmented choices + quantity stepper (progressive enhancement over the real <select>s) ---------- */
+function syncSegmented() {
+  document.querySelectorAll("select[data-segmented]").forEach(sel => {
+    sel.nextElementSibling?.querySelectorAll("button").forEach(b => b.setAttribute("aria-checked", String(b.dataset.value === sel.value)));
+  });
+}
+document.querySelectorAll("select[data-segmented]").forEach(sel => {
+  const group = document.createElement("div");
+  group.className = "seg-choice";
+  group.setAttribute("role", "radiogroup");
+  const label = document.querySelector(`label[for="${sel.id}"]`);
+  if (label) group.setAttribute("aria-label", label.textContent.trim());
+  [...sel.options].forEach(opt => {
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("role", "radio"); b.dataset.value = opt.value; b.textContent = opt.textContent;
+    b.addEventListener("click", () => { sel.value = opt.value; sel.dispatchEvent(new Event("change", { bubbles: true })); syncSegmented(); });
+    group.append(b);
+  });
+  sel.after(group);
+  sel.tabIndex = -1;
+  sel.setAttribute("aria-hidden", "true");
+  sel.addEventListener("change", syncSegmented);
+});
+syncSegmented();
+function stepQuantity(delta) {
+  const input = $("quantity");
+  input.value = Math.max(1, (parseInt(input.value, 10) || 0) + delta);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+$("qtyMinus").addEventListener("click", () => stepQuantity(-1));
+$("qtyPlus").addEventListener("click", () => stepQuantity(1));
+
 /* ---------- Entries ---------- */
+function updateFilterBadge() {
+  const n = [$("entriesStatus").value, $("entriesAttendance").value, (!state.recentEntries && !state.trashView && $("entriesDate").value && $("entriesDate").value !== todayISO()) ? "d" : ""].filter(Boolean).length;
+  $("filterBadge").textContent = n; $("filterBadge").hidden = n === 0;
+}
+$("filterToggle").addEventListener("click", () => {
+  const open = !document.querySelector(".filters").classList.contains("open");
+  document.querySelector(".filters").classList.toggle("open", open);
+  $("filterToggle").setAttribute("aria-expanded", String(open));
+});
 let entriesReq = 0;
 async function loadEntries() {
   const date = $("entriesDate").value;
@@ -438,6 +623,7 @@ async function loadEntries() {
   if ($("entrySearch").value.trim()) params.set("q", $("entrySearch").value.trim());
   const summaryDate = date || state.dashboardDate || todayISO();
   const my = ++entriesReq;
+  updateFilterBadge();
   const rows = $("entryRows");
   if (!rows.querySelector(".entry-row")) setTableState(rows, 8, "loading");
   try {
@@ -643,6 +829,7 @@ function populateEntryForm(entry = null) {
   $("quantity").value = entry?.quantity || 1;
   $("entryStatus").value = entry?.status || "Pending";
   $("attendance").value = entry?.attendance || "Not Marked";
+  syncSegmented();
   $("remark").value = entry?.remark || "";
   $("formAvailable").textContent = "—";
   state.formAvailable = null;
@@ -651,9 +838,9 @@ function populateEntryForm(entry = null) {
 }
 
 function openEntryForm(entry = null) {
-  const route = entry ? `#entries/${encodeURIComponent(entry._id)}` : "#entries/new";
-  history.pushState(null, "", route);
-  setPage("entries", { updateHash: false });
+  history.pushState(null, "", pathFor("entries", entry ? entry._id : "new"));
+  if (state.page !== "entries") setPage("entries", { updateUrl: false });
+  setDocumentTitle(entry ? "Edit entry" : "New entry");
   openEntryRoute(entry?._id || "new", entry);
 }
 
@@ -672,7 +859,7 @@ async function openEntryRoute(routeId, entry = null) {
     if (state.entryRouteId !== routeId) return;
     console.error(err);
     toast(err.message, "error");
-    history.replaceState(null, "", "#entries");
+    history.replaceState(null, "", entriesBasePath());
     handleLocationChange();
   }
 }
@@ -685,8 +872,8 @@ function closeEntryRoute() {
   availabilityReq++;
 }
 function closeEntryForm() {
-  if (location.hash.startsWith("#entries/")) {
-    history.replaceState(null, "", "#entries");
+  if (/^\/entries\/(?!recent$|trash$)[^/]+\/?$/.test(location.pathname)) {
+    history.replaceState(null, "", entriesBasePath());
     handleLocationChange();
     return;
   }
@@ -1089,14 +1276,23 @@ $("newPerson").addEventListener("input", () => setFieldError("newPerson", ""));
 /* ==========================================================================
    Account: sign in / out, change password
    ========================================================================== */
+function hideBootSplash() {
+  const splash = $("bootSplash");
+  if (!splash || splash.dataset.done) return;
+  splash.dataset.done = "1";
+  splash.classList.add("is-done");
+  setTimeout(() => splash.remove(), 400);
+}
 function showLogin(message = "") {
   state.authed = false;
+  hideBootSplash();
   document.querySelectorAll(".modal-backdrop:not([hidden])").forEach(el => closeModal(el));
   $("appShell").hidden = true;
   $("loginScreen").hidden = false;
   state.byId.clear();
   [$("entryRows"), $("recentRows")].forEach(t => setTableState(t, 8, "loading"));
   $("loginPassword").value = "";
+  setDocumentTitle("Sign in");
   if (message) showAlert($("loginAlert"), message); else hideAlert($("loginAlert"));
   requestAnimationFrame(() => ($("loginId").value ? $("loginPassword") : $("loginId")).focus());
 }
@@ -1110,6 +1306,8 @@ async function enterApp(auth) {
   $("defaultPwBanner").hidden = !auth.usingDefaultPassword;
   loadSettings();
   handleLocationChange();
+  hideBootSplash();
+  if (window.PWA) window.PWA.appReady();
 }
 $("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1129,7 +1327,8 @@ $("loginForm").addEventListener("submit", async (event) => {
 });
 async function logout() {
   try { await api("/api/auth/logout", { method: "POST" }); } catch (err) { console.error(err); }
-  history.replaceState(null, "", location.pathname);
+  if (window.PWA) window.PWA.clearPrivateCache();     // forget offline copies of this person's data
+  history.replaceState(null, "", "/login");
   showLogin();
 }
 $("logoutTop").addEventListener("click", logout);
@@ -1250,10 +1449,14 @@ $("downloadAll").addEventListener("click", (e) => downloadReport({}, e.currentTa
 /* ==========================================================================
    Wiring + boot
    ========================================================================== */
-document.querySelectorAll("[data-page]").forEach(btn => btn.addEventListener("click", () => setPage(btn.dataset.page)));
-document.querySelectorAll("[data-goto]").forEach(btn => btn.addEventListener("click", () => setPage(btn.dataset.goto)));
+document.querySelectorAll("[data-page]").forEach(btn => btn.addEventListener("click", (e) => { e.preventDefault(); navigate(`/${btn.dataset.page}`); }));
+document.querySelectorAll("[data-goto]").forEach(btn => btn.addEventListener("click", (e) => { e.preventDefault(); navigate(`/${btn.dataset.goto}`); }));
 
 $("dashboardDate").addEventListener("change", () => { state.dashboardDate = $("dashboardDate").value || todayISO(); loadDashboard(); });
+function syncEntriesUrl({ push = false } = {}) {
+  const path = entriesBasePath();
+  if (state.page === "entries" && location.pathname !== path && !state.entryRouteId) history[push ? "pushState" : "replaceState"](null, "", path);
+}
 function leaveRecentEntries(keepTrash = false) {
   if (state.recentEntries) {
     state.recentEntries = false;
@@ -1263,6 +1466,7 @@ function leaveRecentEntries(keepTrash = false) {
     state.trashView = false;
     $("trashButton").setAttribute("aria-pressed", "false");
   }
+  syncEntriesUrl();
 }
 ["entriesDate", "entriesStatus", "entriesAttendance"].forEach(id => $(id).addEventListener("change", () => {
   leaveRecentEntries(id !== "entriesDate");      // status / attendance filters also work inside Trash
@@ -1281,6 +1485,7 @@ $("trashButton").addEventListener("click", () => {
   $("trashButton").setAttribute("aria-pressed", String(state.trashView));
   $("entriesDate").value = state.trashView ? "" : todayISO();
   $("entriesStatus").value = ""; $("entriesAttendance").value = ""; $("entrySearch").value = "";
+  syncEntriesUrl({ push: true });
   loadEntries();
 });
 $("recentEntriesButton").addEventListener("click", () => {
@@ -1296,6 +1501,7 @@ $("recentEntriesButton").addEventListener("click", () => {
   } else {
     $("entriesDate").value = todayISO();
   }
+  syncEntriesUrl({ push: true });
   loadEntries();
 });
 $("clearFilters").addEventListener("click", () => {
@@ -1308,6 +1514,7 @@ $("clearFilters").addEventListener("click", () => {
 $("todayLabel").textContent = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
 
 async function boot() {
+  migrateLegacyHash();
   syncOnline();
   try {
     await enterApp(await api("/api/auth/me"));
